@@ -39,8 +39,20 @@ class WebSocketStreamManager:
         feed_config = settings.yaml_config.get("market_feed", {})
         self._feed_mode = feed_config.get("active", "mock").lower()
 
-        # Mock price seed
-        self._prices = {"BTCUSD": 65000.0, "ETHUSD": 3500.0, "NIFTY50": 24200.0, "BANKNIFTY": 52000.0}
+        # Mock price seed — spans Index, Equity, Currency, Commodity, and Crypto segments
+        self._prices = {
+            # Index
+            "NIFTY50": 24200.0, "BANKNIFTY": 52000.0, "FINNIFTY": 23500.0,
+            # Equity
+            "RELIANCE": 2950.0, "TCS": 3850.0, "HDFCBANK": 1650.0, "INFY": 1850.0,
+            "ICICIBANK": 1150.0, "SBIN": 830.0, "ITC": 460.0,
+            # Currency
+            "USDINR": 83.50,
+            # Commodity
+            "CRUDEOIL": 6800.0, "GOLD": 72000.0, "SILVER": 92000.0, "NATURALGAS": 250.0,
+            # Crypto
+            "BTCUSD": 65000.0, "ETHUSD": 3500.0,
+        }
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

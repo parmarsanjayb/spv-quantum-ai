@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,10 +43,14 @@ class ConnectionManager:
         """Publishes payload to all registered sockets."""
         async with self._lock:
             connections = list(self.active_connections)
-        
+
+        # Event payloads carry raw datetime/Enum values (from Pydantic .model_dump()),
+        # which the stdlib json encoder used by WebSocket.send_json() cannot serialize.
+        encoded = jsonable_encoder(message)
+
         for connection in connections:
             try:
-                await connection.send_json(message)
+                await connection.send_json(encoded)
             except Exception:
                 # Silently handle dead connection removals
                 async with self._lock:

@@ -38,6 +38,47 @@ async def test_websocket_connection_and_broadcast():
             
             # Clean up subscription
             await event_bus.unsubscribe("test_topic", ws_event_broadcaster)
-            
+
+    finally:
+        await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_websocket_broadcast_serializes_nested_datetime():
+    """Real event payloads (ticks, candles, decisions, trades) carry nested
+    datetime/Enum values from Pydantic .model_dump(). The stdlib json encoder
+    behind WebSocket.send_json() cannot serialize those directly, so the
+    broadcaster must run payloads through jsonable_encoder() first — otherwise
+    every broadcast silently fails and the client never receives anything."""
+    client = TestClient(app)
+    event_bus.start()
+
+    try:
+        with client.websocket_connect("/ws") as websocket:
+            from dashboard.main import ws_event_broadcaster
+            await event_bus.subscribe("test_topic_dt", ws_event_broadcaster)
+
+            evt = EventModel(
+                event_type="test_topic_dt",
+                source_agent="test_agent",
+                payload={
+                    "tick": {
+                        "symbol": "NIFTY50",
+                        "timestamp": datetime.now(timezone.utc),
+                        "close": 24200.0,
+                    }
+                }
+            )
+            await event_bus.publish(evt)
+            await asyncio.sleep(0.05)
+
+            data = websocket.receive_json()
+            assert data["topic"] == "test_topic_dt"
+            assert data["data"]["tick"]["symbol"] == "NIFTY50"
+            assert data["data"]["tick"]["close"] == 24200.0
+            assert isinstance(data["data"]["tick"]["timestamp"], str)
+
+            await event_bus.unsubscribe("test_topic_dt", ws_event_broadcaster)
+
     finally:
         await event_bus.stop()

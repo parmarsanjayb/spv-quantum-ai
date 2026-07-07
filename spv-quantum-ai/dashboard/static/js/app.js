@@ -101,7 +101,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Live prices
         if (topic === "market_data" || topic === "tick") {
-            updatePriceWidget(data);
+            updatePriceWidget(data.tick || data);
         } else if (topic === "order_filled" || topic === "paper_order_filled") {
             refreshTables();
             fetchEmployeeData();
