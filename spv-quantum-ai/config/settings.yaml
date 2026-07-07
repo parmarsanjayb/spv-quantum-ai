@@ -8,6 +8,8 @@ agents:
   market_agent:
     enabled: true
     tick_interval_ms: 1000
+  market_analyst_agent:
+    enabled: true
   market_intelligence_agent:
     enabled: true
   risk_agent:

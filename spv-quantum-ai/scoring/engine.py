@@ -89,10 +89,13 @@ class DecisionScoringEngine:
             regime_val = r_reg.market_regime.value
 
         # Risk
+        # RiskEngine.get_dashboard_metrics() reports OPERATIONAL/RESTRICTED (system-wide
+        # health), which must be translated to the ALLOW/BLOCK vocabulary the confidence
+        # calculator expects (the same vocabulary RiskEngine.validate_order() returns).
         risk_status = "BLOCK"
         try:
             risk_metrics = await risk_engine.get_dashboard_metrics()
-            risk_status = risk_metrics.get("risk_status", "BLOCK")
+            risk_status = "ALLOW" if risk_metrics.get("risk_status") == "OPERATIONAL" else "BLOCK"
         except Exception:
             pass
 
@@ -138,6 +141,8 @@ class DecisionScoringEngine:
             timeframe=timeframe.value,
             overall_confidence=conf_score,
             component_scores=comp_scores,
+            risk_status=risk_status,
+            recommended_strategy=(report.recommended_strategy if report else None),
             decision_quality=quality,
             missing_requirements=missing_reqs,
             conflicting_signals=conflicts,

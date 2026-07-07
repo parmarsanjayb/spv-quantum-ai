@@ -212,3 +212,22 @@ async def test_decision_scoring_engine_scanner_match_integration():
     await event_bus.unsubscribe("decision_score", cb)
     await event_bus.stop()
 
+
+@pytest.mark.asyncio
+async def test_evaluate_decision_translates_risk_engine_vocabulary():
+    """RiskEngine.get_dashboard_metrics() reports OPERATIONAL/RESTRICTED (system-wide
+    health), not the ALLOW/BLOCK/REDUCE_POSITION vocabulary used elsewhere in risk
+    decisions. evaluate_decision() must translate it and expose the translated value
+    on DecisionScoreResult.risk_status so downstream consumers (ChiefDecisionAgent)
+    never see the raw dashboard vocabulary."""
+    engine = DecisionScoringEngine()
+
+    result = await engine.evaluate_decision("WIPRO", Timeframe.M1)
+
+    assert result.risk_status in ("ALLOW", "BLOCK")
+    assert result.component_scores["risk_status"] in (0.0, 60.0, 100.0)
+    if result.risk_status == "ALLOW":
+        assert result.component_scores["risk_status"] == 100.0
+    else:
+        assert result.component_scores["risk_status"] == 0.0
+
