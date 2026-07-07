@@ -138,13 +138,20 @@ async def test_trading_guard_session_check_uses_ist_not_server_local_time():
     used to call .astimezone() with no timezone argument, which resolves to the
     server/container's local timezone (UTC in this environment, or anything else
     depending on deployment) instead of India Standard Time - so on a UTC server,
-    trades were spuriously allowed/blocked based on the wrong clock entirely."""
+    trades were spuriously allowed/blocked based on the wrong clock entirely.
+    Real-exchange-hours guards only apply to non-paper (live) brokers - the paper
+    broker's mock feed runs continuously and is exempt (see next test)."""
     from datetime import datetime, timezone as tz, time as dt_time
+    from unittest.mock import patch, MagicMock
     from zoneinfo import ZoneInfo
     from safety.guard import TradingGuard
 
     guard = TradingGuard({"trading_session_guard": True})
-    allowed, reason = await guard.check_session({"symbol": "INFY"})
+
+    fake_broker = MagicMock()
+    fake_broker.name = "kotak_neo"
+    with patch("safety.guard.broker_manager.get_active", return_value=fake_broker):
+        allowed, reason = await guard.check_session({"symbol": "INFY"})
 
     ist_now = datetime.now(tz.utc).astimezone(ZoneInfo("Asia/Kolkata")).time()
     expected_allowed = dt_time(9, 15) <= ist_now <= dt_time(15, 30)
@@ -152,3 +159,28 @@ async def test_trading_guard_session_check_uses_ist_not_server_local_time():
     assert allowed == expected_allowed
     if not expected_allowed:
         assert "outside allowed window" in reason
+
+
+@pytest.mark.asyncio
+async def test_trading_guard_session_check_bypassed_for_paper_broker():
+    """Real-exchange-hours guards (session/holiday/market-closing) model NSE's
+    actual trading calendar, which doesn't apply to the paper broker's mock feed -
+    paper trading must be exercisable anytime, not just during real NSE hours."""
+    from unittest.mock import patch, MagicMock
+    from safety.guard import TradingGuard
+
+    guard = TradingGuard({
+        "trading_session_guard": True,
+        "holiday_guard": True,
+        "market_closing_guard": True,
+    })
+
+    fake_broker = MagicMock()
+    fake_broker.name = "paper_broker"
+    with patch("safety.guard.broker_manager.get_active", return_value=fake_broker):
+        allowed, _ = await guard.check_session({"symbol": "INFY"})
+        assert allowed is True
+        allowed, _ = await guard.check_holiday({"symbol": "INFY"})
+        assert allowed is True
+        allowed, _ = await guard.check_market_closing({"symbol": "INFY"})
+        assert allowed is True

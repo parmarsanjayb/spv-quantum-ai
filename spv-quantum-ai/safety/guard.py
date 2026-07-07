@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from typing import Dict, Any, Tuple, Optional
 from core.logging import get_logger
 from brokers import broker_engine
+from brokers.manager import broker_manager
 
 logger = get_logger("trading_guard")
 
@@ -22,6 +23,16 @@ class TradingGuard:
         # streak trackers
         self.consecutive_losses = 0
         self.consecutive_wins = 0
+
+    def _is_paper_broker_active(self) -> bool:
+        """Real-exchange-hours guards (session/holiday/market-closing) model NSE's
+        actual trading calendar, which is meaningless for the paper broker's mock
+        feed - paper trading is meant to be exercised anytime, not just 09:15-15:30
+        IST on NSE trading days. Live/real brokers remain fully gated."""
+        try:
+            return broker_manager.get_active().name == "paper_broker"
+        except Exception:
+            return False
 
     async def check_all(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
         """Runs all safety check functions in sequence."""
@@ -47,7 +58,7 @@ class TradingGuard:
         return True, "Passed all safety checks."
 
     async def check_session(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
-        if not self.config.get("trading_session_guard", True):
+        if not self.config.get("trading_session_guard", True) or self._is_paper_broker_active():
             return True, ""
         now = datetime.now(timezone.utc).astimezone(IST).time()
         start = dt_time(9, 15)
@@ -57,7 +68,7 @@ class TradingGuard:
         return True, ""
 
     async def check_holiday(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
-        if not self.config.get("holiday_guard", True):
+        if not self.config.get("holiday_guard", True) or self._is_paper_broker_active():
             return True, ""
         # Simulate simple holiday schedule (Saturday, Sunday)
         today = datetime.now(timezone.utc).astimezone(IST).weekday()
@@ -66,7 +77,7 @@ class TradingGuard:
         return True, ""
 
     async def check_market_closing(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
-        if not self.config.get("market_closing_guard", True):
+        if not self.config.get("market_closing_guard", True) or self._is_paper_broker_active():
             return True, ""
         now = datetime.now(timezone.utc).astimezone(IST)
         # Market closes at 15:30. Check if we are within 15 minutes of close
