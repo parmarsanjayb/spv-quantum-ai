@@ -107,3 +107,121 @@ async def test_vwap_employee_analysis():
     finally:
         await employee_engine.stop()
         await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_risk_employee_reacts_to_real_safety_events():
+    """RiskEmployee used to subscribe to 'safety_status', an event nothing ever
+    publishes (SafetyEngine emits 'safety_blocked' / 'safety_check_passed' per
+    order instead), so it was permanently stuck on its default 'WAIT' decision."""
+    event_bus.start()
+    await employee_engine.start()
+    try:
+        risk_emp = employee_engine.risk_emp
+        assert risk_emp.latest_results == {}
+
+        await event_bus.publish(EventModel(
+            event_type="safety_check_passed",
+            source_agent="safety_engine",
+            payload={"order_details": {"symbol": "RELIANCE"}, "response": {"allowed": True}}
+        ))
+        await asyncio.sleep(0.05)
+        res = risk_emp.latest_results.get("RELIANCE")
+        assert res is not None
+        assert res["recommendation"] == "BUY"
+
+        await event_bus.publish(EventModel(
+            event_type="safety_blocked",
+            source_agent="safety_engine",
+            payload={"order_details": {"symbol": "RELIANCE"}, "response": {"allowed": False}}
+        ))
+        await asyncio.sleep(0.05)
+        res = risk_emp.latest_results.get("RELIANCE")
+        assert res["recommendation"] == "WAIT"
+    finally:
+        await employee_engine.stop()
+        await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_market_regime_employee_reacts_to_real_regime_events():
+    """MarketRegimeEmployee used to subscribe to 'regime_changed' (never published)
+    and read payload['regime'] (wrong key); RegimeEngine actually publishes
+    'market_regime' with the value under 'market_regime'."""
+    event_bus.start()
+    await employee_engine.start()
+    try:
+        regime_emp = employee_engine.market_regime
+        assert regime_emp.latest_results == {}
+
+        await event_bus.publish(EventModel(
+            event_type="market_regime",
+            source_agent="regime_engine",
+            payload={"symbol": "NIFTY50", "market_regime": "TRENDING_BULLISH", "confidence": 80.0}
+        ))
+        await asyncio.sleep(0.05)
+        res = regime_emp.latest_results.get("NIFTY50")
+        assert res is not None
+        assert res["recommendation"] == "TRENDING_BULLISH"
+        assert res["confidence"] == 80.0
+    finally:
+        await employee_engine.stop()
+        await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_capital_protection_employee_reacts_to_real_pnl_events():
+    """CapitalProtectionEmployee used to subscribe to 'pnl_update' (never published);
+    PortfolioEngine actually publishes 'pnl_updated'."""
+    event_bus.start()
+    await employee_engine.start()
+    try:
+        cap_emp = employee_engine.cap_protection
+        assert cap_emp.latest_results == {}
+
+        await event_bus.publish(EventModel(
+            event_type="pnl_updated",
+            source_agent="portfolio_engine",
+            payload={"realized_pnl": 100.0, "unrealized_pnl": 50.0, "mtm": 150.0}
+        ))
+        await asyncio.sleep(0.05)
+        res = cap_emp.latest_results.get("SYSTEM")
+        assert res is not None
+        assert res["recommendation"] == "BUY"
+    finally:
+        await employee_engine.stop()
+        await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_paper_trading_employee_reacts_to_real_session_events():
+    """PaperTradingEmployee used to subscribe to 'paper_status_changed' (never
+    published); PaperTradingEngine actually publishes 'paper_trade_started' and
+    'paper_trade_stopped'."""
+    event_bus.start()
+    await employee_engine.start()
+    try:
+        paper_emp = employee_engine.paper_trading
+        assert paper_emp.latest_results == {}
+
+        await event_bus.publish(EventModel(
+            event_type="paper_trade_started",
+            source_agent="paper_trading_engine",
+            payload={"session_id": "PPS-test"}
+        ))
+        await asyncio.sleep(0.05)
+        res = paper_emp.latest_results.get("SYSTEM")
+        assert res is not None
+        assert res["recommendation"] == "BUY"
+
+        await event_bus.publish(EventModel(
+            event_type="paper_trade_stopped",
+            source_agent="paper_trading_engine",
+            payload={"session_id": "PPS-test"}
+        ))
+        await asyncio.sleep(0.05)
+        res = paper_emp.latest_results.get("SYSTEM")
+        assert res["recommendation"] == "WAIT"
+    finally:
+        await employee_engine.stop()
+        await event_bus.stop()

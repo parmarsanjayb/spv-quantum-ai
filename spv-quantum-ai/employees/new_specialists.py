@@ -179,16 +179,17 @@ class MarketRegimeEmployee(BaseNewSpecialist):
 
     async def start(self) -> None:
         await super().start()
-        await event_bus.subscribe("regime_changed", self._on_regime)
+        # RegimeEngine publishes "market_regime", not "regime_changed".
+        await event_bus.subscribe("market_regime", self._on_regime)
 
     async def stop(self) -> None:
         await super().stop()
-        await event_bus.unsubscribe("regime_changed", self._on_regime)
+        await event_bus.unsubscribe("market_regime", self._on_regime)
 
     async def _on_regime(self, event: EventModel) -> None:
         try:
             payload = event.payload
-            regime = payload.get("regime", "Sideways")
+            regime = payload.get("market_regime", "Sideways")
             confidence = payload.get("confidence", 50.0)
             symbol = payload.get("symbol", "NIFTY50")
             
@@ -506,19 +507,23 @@ class RiskEmployee(BaseNewSpecialist):
 
     async def start(self) -> None:
         await super().start()
-        await event_bus.subscribe("safety_status", self._on_safety)
+        # "safety_status" is never published anywhere (SafetyEngine.check_order()
+        # emits "safety_blocked" / "safety_check_passed" per order via SafetyManager).
+        await event_bus.subscribe("safety_blocked", self._on_safety)
+        await event_bus.subscribe("safety_check_passed", self._on_safety)
 
     async def stop(self) -> None:
         await super().stop()
-        await event_bus.unsubscribe("safety_status", self._on_safety)
+        await event_bus.unsubscribe("safety_blocked", self._on_safety)
+        await event_bus.unsubscribe("safety_check_passed", self._on_safety)
 
     async def _on_safety(self, event: EventModel) -> None:
         try:
             payload = event.payload
-            blocked = payload.get("is_blocked", False)
-            symbol = "SYSTEM"
+            blocked = event.event_type == "safety_blocked"
+            symbol = payload.get("order_details", {}).get("symbol", "SYSTEM")
             rec = "WAIT" if blocked else "BUY"
-            
+
             async with self._lock:
                 self.latest_results[symbol] = {
                     "recommendation": rec,
@@ -563,11 +568,12 @@ class CapitalProtectionEmployee(BaseNewSpecialist):
 
     async def start(self) -> None:
         await super().start()
-        await event_bus.subscribe("pnl_update", self._on_pnl)
+        # PortfolioEngine publishes "pnl_updated", not "pnl_update".
+        await event_bus.subscribe("pnl_updated", self._on_pnl)
 
     async def stop(self) -> None:
         await super().stop()
-        await event_bus.unsubscribe("pnl_update", self._on_pnl)
+        await event_bus.unsubscribe("pnl_updated", self._on_pnl)
 
     async def _on_pnl(self, event: EventModel) -> None:
         try:
@@ -761,17 +767,21 @@ class PaperTradingEmployee(BaseNewSpecialist):
 
     async def start(self) -> None:
         await super().start()
-        await event_bus.subscribe("paper_status_changed", self._on_paper_status)
+        # "paper_status_changed" is never published; PaperTradingEngine publishes
+        # "paper_trade_started" / "paper_trade_stopped" for session lifecycle.
+        await event_bus.subscribe("paper_trade_started", self._on_paper_status)
+        await event_bus.subscribe("paper_trade_stopped", self._on_paper_status)
 
     async def stop(self) -> None:
         await super().stop()
-        await event_bus.unsubscribe("paper_status_changed", self._on_paper_status)
+        await event_bus.unsubscribe("paper_trade_started", self._on_paper_status)
+        await event_bus.unsubscribe("paper_trade_stopped", self._on_paper_status)
 
     async def _on_paper_status(self, event: EventModel) -> None:
         try:
-            payload = event.payload
             symbol = "SYSTEM"
-            rec = "BUY" if payload.get("is_active", False) else "WAIT"
+            is_active = event.event_type == "paper_trade_started"
+            rec = "BUY" if is_active else "WAIT"
             async with self._lock:
                 self.latest_results[symbol] = {
                     "recommendation": rec,
