@@ -9,7 +9,7 @@ name: sample_trend_strategy
 rules:
   conditions:
   - key: EMA_9
-    operator: crosses_above
+    operator: '>'
     source: indicator
     target: EMA_20
   - key: RSI
