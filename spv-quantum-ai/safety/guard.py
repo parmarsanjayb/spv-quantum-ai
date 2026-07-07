@@ -164,7 +164,7 @@ class TradingGuard:
         price = float(order_data.get("price") or 100.0)
         order_exposure = qty * price
 
-        total_exposure = sum(abs(p.quantity * p.average_price) for p in active_positions)
+        total_exposure = sum(abs(p.quantity * p.avg_price) for p in active_positions)
         max_exposure = float(self.config.get("max_exposure_usd", 50000.0))
         if total_exposure + order_exposure > max_exposure:
             return False, f"Exposure guard: order would push total exposure (${total_exposure + order_exposure:.2f}) beyond limit (${max_exposure:.2f})."

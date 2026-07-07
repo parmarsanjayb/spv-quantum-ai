@@ -72,7 +72,7 @@ class SafetyEngine:
             pos = next((p for p in positions if p.symbol == symbol), None)
             if pos and pos.quantity != 0:
                 pos_side = "BUY" if pos.quantity > 0 else "SELL"
-                self.manager.protection.register_position(symbol, pos_side, pos.quantity, pos.average_price)
+                self.manager.protection.register_position(symbol, pos_side, pos.quantity, pos.avg_price)
             else:
                 self.manager.protection.register_position(symbol, side, 0, avg_price)
         except Exception as e:
@@ -83,7 +83,7 @@ class SafetyEngine:
         from portfolio.engine import portfolio_engine
         daily_pnl = portfolio_engine.summary.realized_pnl
         active_positions = [p for p in await portfolio_engine.positions.get_all_positions() if p.quantity != 0]
-        total_exposure = sum(abs(p.quantity * p.average_price) for p in active_positions)
+        total_exposure = sum(abs(p.quantity * p.avg_price) for p in active_positions)
 
         daily_loss_limit = float(self.config.get("daily_loss_guard_usd", 500.0))
         remaining_loss = max(0.0, daily_loss_limit - abs(daily_pnl)) if daily_pnl < 0 else daily_loss_limit
