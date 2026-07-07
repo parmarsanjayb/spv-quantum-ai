@@ -91,9 +91,9 @@ class DecisionPublisher:
             source_agent="chief_decision_agent",
             payload=payload
         ))
-        # Route to Execution Agent via live event loop
+        # Route through the Risk Agent for final order-level validation before execution
         await event_bus.publish(EventModel(
-            event_type="order_approved",
+            event_type="order_request",
             source_agent="chief_decision_agent",
             payload={
                 "symbol": payload["symbol"],
@@ -145,7 +145,7 @@ class ChiefDecisionAgent(BaseAgent):
 
     @property
     def output_event_types(self) -> List[str]:
-        return ["trade_approved", "trade_rejected", "trade_blocked", "order_approved"]
+        return ["trade_approved", "trade_rejected", "trade_blocked", "order_request"]
 
     async def initialize(self) -> None:
         self.log_info("ChiefDecisionAgent initialized.")
@@ -157,6 +157,7 @@ class ChiefDecisionAgent(BaseAgent):
         if event.event_type != "decision_score":
             return None
 
+        start_time = time.perf_counter()
         score_data = event.payload.get("decision_score", event.payload)
         symbol = score_data.get("symbol", "UNKNOWN")
         confidence = float(score_data.get("overall_confidence", 0.0))
@@ -209,8 +210,10 @@ class ChiefDecisionAgent(BaseAgent):
             self.log_info(f"Chief Decision: {state} for symbol {symbol} | Reason: {explanation}")
             
             return AgentResultModel(
-                agent_name=self.name,
+                agent_name=self.agent_name,
                 signal=state,
                 confidence=confidence,
+                reason=explanation,
+                processing_time=(time.perf_counter() - start_time) * 1000.0,
                 metadata=record
             )

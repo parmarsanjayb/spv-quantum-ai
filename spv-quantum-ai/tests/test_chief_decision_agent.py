@@ -121,3 +121,67 @@ async def test_chief_decision_agent_integration():
     await agent.stop()
     await event_bus.unsubscribe("trade_approved", cb)
     await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_chief_decision_agent_routes_through_risk_before_execution():
+    """Approved decisions must be routed via order_request (Risk Agent) rather than
+    being sent straight to order_approved (Execution Agent), so the Risk step in the
+    Market Feed -> Scanner -> Decision Score -> Chief Decision -> Risk -> Execution
+    pipeline is not bypassed."""
+    event_bus.start()
+
+    agent = ChiefDecisionAgent()
+    await agent.start()
+
+    agent.approved_queue.clear()
+    agent.coordinator.reset_daily_trades()
+
+    portfolio_engine.summary.available_capital = 100000.0
+    async with portfolio_engine.positions._lock:
+        portfolio_engine.positions._positions.clear()
+
+    order_requests = []
+    order_approved_events = []
+
+    async def on_order_request(evt: EventModel):
+        order_requests.append(evt)
+
+    async def on_order_approved(evt: EventModel):
+        order_approved_events.append(evt)
+
+    await event_bus.subscribe("order_request", on_order_request)
+    await event_bus.subscribe("order_approved", on_order_approved)
+
+    await event_bus.publish(EventModel(
+        source_agent="decision_scoring_engine",
+        event_type="decision_score",
+        payload={
+            "symbol": "HDFCBANK",
+            "overall_confidence": 90.0,
+            "risk_status": "ALLOW",
+            "recommended_strategy": "ema_crossover",
+            "side": "BUY",
+            "quantity": 5.0,
+            "price": 1600.0
+        }
+    ))
+
+    for _ in range(20):
+        if len(order_requests) >= 1:
+            break
+        await asyncio.sleep(0.05)
+
+    assert len(order_requests) == 1
+    assert order_requests[0].payload["symbol"] == "HDFCBANK"
+    # The Chief Decision Agent must not publish order_approved directly - only the
+    # Risk Agent is allowed to do that after validating the order_request.
+    assert len(order_approved_events) == 0
+
+    # The agent must not crash while building its AgentResultModel.
+    assert agent.status == "RUNNING"
+
+    await agent.stop()
+    await event_bus.unsubscribe("order_request", on_order_request)
+    await event_bus.unsubscribe("order_approved", on_order_approved)
+    await event_bus.stop()
