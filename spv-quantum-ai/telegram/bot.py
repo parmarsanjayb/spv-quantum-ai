@@ -40,7 +40,7 @@ class TelegramBotClient:
             parse_mode: Formatting syntax choice ('HTML' or 'MarkdownV2').
         """
         if not self.api_url or not self.chat_id:
-            logger.debug("Bypassed sending Telegram message (credentials absent)", msg=message)
+            logger.debug("Bypassed sending Telegram message (credentials absent)", telegram_message=message)
             return False
 
         if not self.client:

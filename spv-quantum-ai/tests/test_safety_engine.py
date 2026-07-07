@@ -130,3 +130,25 @@ async def test_hidden_stop_loss_and_trailing():
         await event_bus.unsubscribe("hidden_stop_triggered", capture_hidden)
         await event_bus.stop()
         await safety_engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_trading_guard_session_check_uses_ist_not_server_local_time():
+    """NSE market hours (09:15-15:30) are always in IST. TradingGuard.check_session
+    used to call .astimezone() with no timezone argument, which resolves to the
+    server/container's local timezone (UTC in this environment, or anything else
+    depending on deployment) instead of India Standard Time - so on a UTC server,
+    trades were spuriously allowed/blocked based on the wrong clock entirely."""
+    from datetime import datetime, timezone as tz, time as dt_time
+    from zoneinfo import ZoneInfo
+    from safety.guard import TradingGuard
+
+    guard = TradingGuard({"trading_session_guard": True})
+    allowed, reason = await guard.check_session({"symbol": "INFY"})
+
+    ist_now = datetime.now(tz.utc).astimezone(ZoneInfo("Asia/Kolkata")).time()
+    expected_allowed = dt_time(9, 15) <= ist_now <= dt_time(15, 30)
+
+    assert allowed == expected_allowed
+    if not expected_allowed:
+        assert "outside allowed window" in reason

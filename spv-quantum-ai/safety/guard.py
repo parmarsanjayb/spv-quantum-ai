@@ -1,10 +1,15 @@
 import time
 from datetime import datetime, timezone, time as dt_time
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, Tuple, Optional
 from core.logging import get_logger
 from brokers import broker_engine
 
 logger = get_logger("trading_guard")
+
+# NSE market hours (09:15-15:30) are always defined in India Standard Time,
+# regardless of what timezone the server/container happens to run in.
+IST = ZoneInfo("Asia/Kolkata")
 
 class TradingGuard:
     """Evaluates various pre-trade risk controls and safety gates."""
@@ -44,7 +49,7 @@ class TradingGuard:
     async def check_session(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
         if not self.config.get("trading_session_guard", True):
             return True, ""
-        now = datetime.now(timezone.utc).astimezone().time()
+        now = datetime.now(timezone.utc).astimezone(IST).time()
         start = dt_time(9, 15)
         end = dt_time(15, 30)
         if now < start or now > end:
@@ -55,7 +60,7 @@ class TradingGuard:
         if not self.config.get("holiday_guard", True):
             return True, ""
         # Simulate simple holiday schedule (Saturday, Sunday)
-        today = datetime.now(timezone.utc).astimezone().weekday()
+        today = datetime.now(timezone.utc).astimezone(IST).weekday()
         if today >= 5:  # 5 is Saturday, 6 is Sunday
             return False, "Holiday guard: trading is closed on weekends."
         return True, ""
@@ -63,7 +68,7 @@ class TradingGuard:
     async def check_market_closing(self, order_data: Dict[str, Any]) -> Tuple[bool, str]:
         if not self.config.get("market_closing_guard", True):
             return True, ""
-        now = datetime.now(timezone.utc).astimezone()
+        now = datetime.now(timezone.utc).astimezone(IST)
         # Market closes at 15:30. Check if we are within 15 minutes of close
         if now.hour == 15 and now.minute >= 15:
             return False, "Market closing guard: new entry blocked within 15 minutes of market close."
