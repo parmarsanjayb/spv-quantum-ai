@@ -3,6 +3,8 @@ from brokers.models import OrderSide, OrderStatus, OrderType
 from brokers.paper import PaperBroker
 from brokers.manager import BrokerManager
 from brokers.registry import BROKER_REGISTRY
+from market.manager import market_data_manager
+from market.models import MarketData
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
@@ -114,6 +116,9 @@ async def test_paper_broker_partial_fill() -> None:
     await broker.connect()
     broker._rejection_rate = 0.0
     broker._partial_fill_rate = 1.0  # 100% partial fills
+
+    # Market orders fill at the real cached LTP now, never a placeholder.
+    await market_data_manager.cache.update_tick(MarketData(symbol="NIFTY50", ltp=24200.0))
 
     resp = await broker.place_order(
         symbol="NIFTY50",

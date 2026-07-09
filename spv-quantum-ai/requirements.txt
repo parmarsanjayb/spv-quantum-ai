@@ -17,3 +17,18 @@ aiosqlite>=0.20.0
 pytest-timeout>=2.3.0
 tzdata>=2024.1
 
+# Kotak Neo Trade API — official SDK, not on PyPI. Install separately:
+#   pip install --no-deps "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client"
+# (--no-deps because the SDK pins ancient/conflicting versions, e.g. websockets==8.1,
+# which breaks this project's own websocket server. The versions below are the real,
+# compatible dependencies it needs.)
+six>=1.16.0
+PyJWT>=2.6.0
+python-dateutil>=2.8.2
+bidict>=0.22.1
+pyjsparser>=2.7.1
+websocket-client>=1.8.0
+pandas>=2.2.3
+numpy>=2.0.0
+pyotp>=2.9.0
+

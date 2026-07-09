@@ -99,7 +99,9 @@ class DecisionPublisher:
                 "symbol": payload["symbol"],
                 "side": payload.get("side", "BUY"),
                 "quantity": payload.get("quantity", 10.0),
-                "price": payload.get("price", 100.0),
+                # Real LTP, resolved in analyze() above — APPROVED never reaches
+                # here without one (see the NO_LIVE_PRICE guard).
+                "price": payload.get("price", 0.0),
                 "type": "LIMIT",
                 "strategy_name": payload.get("strategy_name")
             }
@@ -167,18 +169,35 @@ class ChiefDecisionAgent(BaseAgent):
         async with self._lock:
             # 1. Resolve primary conflicts
             state = self.resolver.resolve(confidence, risk_status)
-            
+
             # 2. Run detailed mandatory checks
             if state != "REJECTED":
                 chk_state, code, explanation = await self.coordinator.validate_checks(score_data)
                 if chk_state != "APPROVED":
                     state = chk_state
                 else:
+                    state = "APPROVED"
                     code = "APPROVED"
                     explanation = "All checks passed successfully."
             else:
                 code = "CONFIDENCE_OR_RISK_FAILURE"
                 explanation = f"Confidence {confidence}% or risk status {risk_status} rejected."
+
+            # Resolve the real, current market price. DecisionScoreResult never
+            # carries a price (scoring is price-agnostic), so this used to fall
+            # back to a hardcoded 100.0 — silently mispricing every approved
+            # order regardless of the instrument's real value. An order this
+            # engine can't price correctly must never be approved.
+            live_price = score_data.get("price")
+            if not live_price:
+                from market.manager import market_data_manager
+                live_price = await market_data_manager.get_ltp(symbol)
+
+            if state == "APPROVED" and not live_price:
+                state = "REJECTED"
+                code = "NO_LIVE_PRICE"
+                explanation = f"No live Kotak Neo price available for {symbol}; refusing to approve an unpriced order."
+                self.log_warning(f"Chief Decision: rejecting {symbol} — no live LTP available.")
 
             # Build record payload
             record = {
@@ -192,7 +211,7 @@ class ChiefDecisionAgent(BaseAgent):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "side": score_data.get("side", "BUY"),
                 "quantity": score_data.get("quantity", 10.0),
-                "price": score_data.get("price", 100.0)
+                "price": live_price or 0.0,
             }
 
             # 3. Publish and Queue

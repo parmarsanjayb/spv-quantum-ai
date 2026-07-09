@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Any, Optional
 
 class PositionSizingEngine:
@@ -10,6 +11,11 @@ class PositionSizingEngine:
       - ATR Based
       - Volatility Based
       - Config Driven
+
+    All division-based strategies floor to a whole number before returning —
+    real exchanges don't fill fractional shares/lots, so a raw
+    capital / price division (e.g. "5.599626691553897") is never a valid
+    order quantity on its own.
     """
 
     def __init__(self, default_strategy: str = "fixed_quantity", default_params: Optional[Dict[str, Any]] = None) -> None:
@@ -23,10 +29,16 @@ class PositionSizingEngine:
         capital_available: float = 100000.0,
         entry_price: float = 100.0,
         atr: Optional[float] = None,
-        volatility: Optional[float] = None
+        volatility: Optional[float] = None,
+        lot_size: float = 1.0,
     ) -> float:
         strat = strategy or self.default_strategy
         p = {**self.default_params, **(params or {})}
+        lot_size = lot_size if lot_size and lot_size > 0 else 1.0
+
+        def _floor_to_lot(raw_qty: float) -> float:
+            lots = math.floor(raw_qty / lot_size)
+            return float(lots * lot_size)
 
         if strat == "fixed_quantity":
             return float(p.get("quantity", 1.0))
@@ -35,7 +47,7 @@ class PositionSizingEngine:
             allocated_capital = float(p.get("capital", 10000.0))
             if entry_price <= 0:
                 return 0.0
-            return allocated_capital / entry_price
+            return _floor_to_lot(allocated_capital / entry_price)
 
         elif strat == "percentage_risk":
             risk_pct = float(p.get("risk_pct", 1.0)) / 100.0  # e.g. 1%
@@ -43,7 +55,7 @@ class PositionSizingEngine:
             if stop_loss_dist <= 0:
                 return 0.0
             risk_amount = capital_available * risk_pct
-            return risk_amount / stop_loss_dist
+            return _floor_to_lot(risk_amount / stop_loss_dist)
 
         elif strat == "atr_based":
             risk_pct = float(p.get("risk_pct", 1.0)) / 100.0
@@ -52,7 +64,7 @@ class PositionSizingEngine:
             if atr_val <= 0:
                 return 0.0
             risk_amount = capital_available * risk_pct
-            return risk_amount / (atr_val * multiplier)
+            return _floor_to_lot(risk_amount / (atr_val * multiplier))
 
         elif strat == "volatility_based":
             risk_pct = float(p.get("risk_pct", 1.0)) / 100.0
@@ -61,7 +73,7 @@ class PositionSizingEngine:
                 return 0.0
             # Volatility based sizing: Risk Amount / (Entry Price * Volatility Factor)
             risk_amount = capital_available * risk_pct
-            return risk_amount / (entry_price * vol_val)
+            return _floor_to_lot(risk_amount / (entry_price * vol_val))
 
         elif strat == "config_driven":
             # Uses config dict directly

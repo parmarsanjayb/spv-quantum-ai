@@ -5,11 +5,16 @@ import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import pyotp
+from neo_api_client import NeoAPI
+from neo_api_client.api.totp_api import TotpAPI
+
 from brokers.base import BaseBroker
 from brokers.models import (
     BrokerResponse, Funds, Order, OrderStatus, OrderSide, OrderType, Position, Holding, Trade
 )
 from core.bus import event_bus, EventModel
+from core.config import settings
 from core.logging import get_logger
 from brokers.models import (
     KotakConnectedEvent, KotakDisconnectedEvent, KotakOrderPlacedEvent,
@@ -70,22 +75,81 @@ class KotakPublisher:
 
 
 class KotakAuthenticationManager:
-    """Manages credentials and OAuth/JWT session tokens for Kotak Neo."""
+    """
+    Authenticates against the real Kotak Neo Trade API using TOTP + MPIN.
+
+    The official neo_api_client SDK's own login()/session_2fa() wrapper methods
+    (documented in its class docstring and demo.py) do not actually exist in the
+    installed v2.0.2 build. The login path that is actually implemented — and
+    that NeoAPI.subscribe() requires (it checks configuration.edit_token/edit_sid) —
+    is TotpAPI.totp_login() followed by TotpAPI.totp_validate(), so that's what
+    we call directly rather than a nonexistent NeoAPI.login().
+    """
     def __init__(self) -> None:
-        self.session_token: Optional[str] = None
+        self.client: Optional[NeoAPI] = None
+        self.session_token: Optional[str] = None  # mirrors configuration.edit_token
         self.token_expiry: Optional[float] = None
 
     async def authenticate(self) -> bool:
-        # Simulate network delay for API request
-        await asyncio.sleep(0.01)
-        self.session_token = f"kotak-jwt-{uuid.uuid4().hex[:12]}"
-        # Token valid for 10 minutes (600 seconds)
-        self.token_expiry = time.time() + 600.0
-        logger.info("Kotak Neo authenticated successfully", token=self.session_token)
-        return True
+        consumer_key   = settings.KOTAK_NEO_CONSUMER_KEY
+        mobile_number  = settings.KOTAK_NEO_MOBILE_NUMBER
+        ucc            = settings.KOTAK_NEO_UCC
+        mpin           = settings.KOTAK_NEO_MPIN
+        totp_secret    = settings.KOTAK_NEO_TOTP_SECRET
+        environment    = settings.KOTAK_NEO_ENVIRONMENT or "prod"
+
+        if not all([consumer_key, mobile_number, ucc, mpin, totp_secret]):
+            logger.error(
+                "Kotak Neo credentials are not fully configured. "
+                "Set KOTAK_NEO_CONSUMER_KEY, KOTAK_NEO_MOBILE_NUMBER, KOTAK_NEO_UCC, "
+                "KOTAK_NEO_MPIN, and KOTAK_NEO_TOTP_SECRET in .env."
+            )
+            return False
+
+        # Kotak's totp_login rejects bare 10-digit numbers; it requires the
+        # full E.164 form, e.g. "+919876543210".
+        digits = mobile_number.strip()
+        if not digits.startswith("+"):
+            if digits.startswith("91") and len(digits) == 12:
+                digits = f"+{digits}"
+            elif len(digits) == 10:
+                digits = f"+91{digits}"
+        mobile_number = digits
+
+        try:
+            client = NeoAPI(consumer_key=consumer_key, environment=environment)
+            totp_api = TotpAPI(client.api_client)
+            totp_code = pyotp.TOTP(totp_secret).now()
+
+            login_resp = await asyncio.to_thread(
+                totp_api.totp_login, mobile_number=mobile_number, ucc=ucc, totp=totp_code
+            )
+            config = client.api_client.configuration
+            if not config.view_token or not config.sid:
+                logger.error("Kotak Neo TOTP login failed", response=login_resp)
+                return False
+
+            validate_resp = await asyncio.to_thread(totp_api.totp_validate, mpin=mpin)
+            if not config.edit_token or not config.edit_sid:
+                logger.error("Kotak Neo TOTP validation failed", response=validate_resp)
+                return False
+
+            self.client = client
+            self.session_token = config.edit_token
+            # Kotak does not document an exact session TTL in this SDK; refresh
+            # conservatively rather than assume a specific expiry.
+            self.token_expiry = time.time() + 480.0
+            logger.info("Kotak Neo authenticated successfully (TOTP+MPIN).")
+            return True
+        except Exception as e:
+            logger.error("Kotak Neo authentication error", error=str(e))
+            self.client = None
+            self.session_token = None
+            self.token_expiry = None
+            return False
 
     def is_token_valid(self) -> bool:
-        if not self.session_token or not self.token_expiry:
+        if not self.session_token or not self.token_expiry or not self.client:
             return False
         return time.time() < self.token_expiry
 

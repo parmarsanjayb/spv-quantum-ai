@@ -149,13 +149,21 @@ class ExecutionEngine:
         else:
             order_type = OrderType.MARKET
 
-        # Capital Safety check
+        # Capital Safety check — resolve the real current price for market
+        # orders (order.price is legitimately None for those) rather than
+        # assuming a constant. A hardcoded fallback here would let the safety
+        # engine size/validate the order against a fictional price.
+        safety_price = order.price
+        if not safety_price:
+            from market.manager import market_data_manager
+            safety_price = await market_data_manager.get_ltp(order.symbol)
+
         from safety import safety_engine
         safety_resp = await safety_engine.check_order({
             "symbol": order.symbol,
             "side": order.side,
             "quantity": order.quantity,
-            "price": order.price or 100.0,
+            "price": safety_price or 0.0,
             "order_type": order.order_type
         })
         if not safety_resp.allowed:
@@ -183,7 +191,12 @@ class ExecutionEngine:
             if resp.success and resp.data:
                 broker_order = resp.data
                 order.broker_order_id = broker_order.get("order_id")
-                order.avg_fill_price = float(broker_order.get("price") or order.price or 0.0)
+                # The broker's Order model reports the real fill price under
+                # "avg_price" — "price" is only the originally requested price
+                # (None for market orders). Reading the wrong key here always
+                # produced avg_fill_price=0.0, which then made PortfolioEngine
+                # silently drop the position update (it guards on price > 0).
+                order.avg_fill_price = float(broker_order.get("avg_price") or order.price or 0.0)
                 
                 # Check status return from broker place_order (often FILLED immediately on simulator)
                 broker_status = broker_order.get("status", "FILLED").upper()

@@ -105,10 +105,14 @@ class PaperBroker(BaseBroker):
         return BrokerResponse(success=True, broker=self.name, data=margin_details)
 
     async def get_positions(self) -> BrokerResponse:
-        # Refresh unrealised P/L using dummy LTP
+        # Refresh unrealised P/L using the real Kotak Neo LTP for each symbol.
+        # Falls back to the position's own avg_price (flat, zero P&L) only if
+        # the feed genuinely has no data for that symbol yet — never a random walk.
+        from market.manager import market_data_manager
         positions = []
         for pos in self._positions.values():
-            ltp = pos.avg_price * (1 + random.uniform(-0.005, 0.005))
+            real_ltp = await market_data_manager.get_ltp(pos.symbol)
+            ltp = real_ltp if real_ltp else pos.avg_price
             pos.ltp = round(ltp, 2)
             if pos.side == OrderSide.BUY:
                 pos.unrealised_pnl = round((ltp - pos.avg_price) * pos.quantity, 2)
@@ -170,7 +174,24 @@ class PaperBroker(BaseBroker):
             )
 
         # ── Execution price ──
-        exec_price = price if price else round(random.uniform(100, 5000), 2)
+        # A LIMIT order carries its own price. A MARKET order legitimately has
+        # price=None from the caller — that must fill at the real current LTP,
+        # never a random number standing in for one.
+        exec_price = price
+        if not exec_price:
+            from market.manager import market_data_manager
+            exec_price = await market_data_manager.get_ltp(symbol)
+        if not exec_price:
+            order.status = OrderStatus.REJECTED
+            order.reject_reason = f"No live Kotak Neo price available for {symbol}; refusing to fill blind."
+            self._orders[order_id] = order
+            logger.warning("PaperBroker: order REJECTED — no live price", order_id=order_id, symbol=symbol)
+            latency = (time.perf_counter() - t0) * 1000
+            return BrokerResponse(
+                success=False, broker=self.name,
+                data=order.model_dump(), error=order.reject_reason, latency_ms=latency
+            )
+        exec_price = round(exec_price, 2)
 
         # ── Simulate partial fill (5 % chance) ──
         if random.random() < self._partial_fill_rate:

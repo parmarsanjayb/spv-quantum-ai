@@ -1,11 +1,16 @@
+import base64
 import pytest
 from fastapi.testclient import TestClient
 from dashboard.main import app
 from core.config import settings
 
+def _basic_auth_header() -> dict:
+    token = base64.b64encode(f"{settings.DASHBOARD_USERNAME}:{settings.DASHBOARD_PASSWORD}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
 @pytest.fixture
 def client():
-    return TestClient(app)
+    return TestClient(app, headers=_basic_auth_header())
 
 def test_get_settings(client):
     response = client.get("/api/settings")

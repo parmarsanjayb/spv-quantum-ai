@@ -33,12 +33,12 @@ class MarketDataManager:
         self.instruments = InstrumentManager()
         self.status      = MarketStatusManager()
         self.history     = HistoricalDataManager()
-        self.health      = FeedHealthMonitor(stale_threshold_sec=5.0)
+        self.health      = FeedHealthMonitor(stale_threshold_sec=60.0)
 
         self.candles     = CandleManager(self.cache, self._on_candle_close)
         self.ticks       = TickDataManager(self.cache)
         self.options     = OptionChainManager(self.cache)
-        self.stream      = WebSocketStreamManager(self._on_raw_tick, self.health)
+        self.stream      = WebSocketStreamManager(self._on_raw_tick, self.health, self.instruments, self.registry)
 
         self._running: bool = False
         self._options_task: Optional[asyncio.Task] = None
@@ -51,7 +51,7 @@ class MarketDataManager:
         self._running = True
         logger.info("Starting Market Data Engine...")
 
-        await self.status.set_status(MarketSession.OPEN)
+        await self.status.start_auto_tracking()
         await self.health.start()
         await self.stream.start()
 
@@ -68,6 +68,7 @@ class MarketDataManager:
                 pass
         await self.stream.stop()
         await self.health.stop()
+        await self.status.stop_auto_tracking()
         await self.status.set_status(MarketSession.CLOSED)
         logger.info("Market Data Engine stopped.")
 

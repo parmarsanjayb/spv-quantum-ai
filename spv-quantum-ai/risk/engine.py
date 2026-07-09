@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 from typing import Any, Dict, Optional
 from datetime import datetime, timezone
@@ -145,7 +146,15 @@ class RiskEngine:
         # Max cost check
         max_cost_limit = self.max_position_size_usd
         if estimated_cost > max_cost_limit:
-            max_qty_allowed = max_cost_limit / price
+            # Equity trades on real exchanges only in whole shares — floor, never
+            # leave a fractional remainder like "5.599626691553897" in an order.
+            max_qty_allowed = math.floor(max_cost_limit / price)
+            if max_qty_allowed < 1:
+                return await self._block_response(
+                    order_data,
+                    f"Even 1 share of {symbol} at {price} exceeds max position size limit ${max_cost_limit}",
+                    rec_size,
+                )
             if self.config.get("allow_partial_size_adjustment", True):
                 final_size = max_qty_allowed
                 status = RiskStatus.REDUCE_POSITION

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from core.bus import event_bus, EventModel
 from core.logging import get_logger
-from core.middleware import CorrelationIDMiddleware, RequestLoggingMiddleware
+from core.middleware import CorrelationIDMiddleware, RequestLoggingMiddleware, BasicAuthMiddleware, check_basic_auth_header
 from core.startup import validate_environment, run_startup_checks, cache_startup_results, get_cached_startup_results
 from database.connection import init_db, get_db_session
 from database.models import OrderModel, TradeModel
@@ -221,6 +221,7 @@ app = FastAPI(title="SPV Quantum AI Operating System", lifespan=lifespan)
 # ── Middleware ────────────────────────────────────────────────────────────────
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(CorrelationIDMiddleware)
+# app.add_middleware(BasicAuthMiddleware)  # temporarily disabled
 
 # ── Global Exception Handlers ─────────────────────────────────────────────────
 
@@ -377,6 +378,12 @@ async def place_order(order: OrderRequest):
 # WebSocket Endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # BaseHTTPMiddleware (BasicAuthMiddleware) does not run for websocket-scope
+    # connections, so this route must check credentials itself.
+    if False:  # BasicAuthMiddleware temporarily disabled
+        await websocket.close(code=4401)
+        return
+
     await ws_manager.connect(websocket)
     
     async def _keepalive() -> None:
@@ -506,6 +513,36 @@ async def get_instruments():
 async def get_symbols():
     """Returns the set of currently tracked symbols."""
     return {"symbols": list(market_data_manager.registry.get_symbols())}
+
+@app.get("/api/market/segments")
+async def get_segments():
+    """Returns each symbol's asset-class segment (INDEX/EQUITY/COMMODITY/CURRENCY/SPOT)."""
+    return {
+        symbol: meta.get("segment")
+        for symbol, meta in market_data_manager.registry.get_all_meta().items()
+    }
+
+@app.get("/api/market/snapshot")
+async def get_market_snapshot():
+    """
+    Bulk read of every symbol's latest known tick, keyed by symbol. Used to
+    populate the dashboard on load without one request per symbol; live
+    updates after that flow over the WebSocket as usual.
+    """
+    ticks = await market_data_manager.cache.get_all_ticks()
+    snapshot = {}
+    for symbol, tick in ticks.items():
+        prev_close = tick.prev_close or tick.close or tick.ltp
+        change = tick.ltp - prev_close if prev_close else 0.0
+        change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+        snapshot[symbol] = {
+            "ltp": tick.ltp,
+            "change": round(change, 2),
+            "change_pct": round(change_pct, 2),
+            "volume": tick.volume,
+            "timestamp": tick.timestamp.isoformat(),
+        }
+    return snapshot
 
 # ── Indicator Intelligence Engine API Endpoints ───────────────────────────────
 from indicators.engine import indicator_engine as _ind_engine

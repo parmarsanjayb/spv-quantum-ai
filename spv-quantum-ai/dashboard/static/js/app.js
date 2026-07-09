@@ -4,7 +4,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const wsUri = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
     // Active state caches
-    let activePrices = {};
+    let symbolSegments = {};   // symbol -> raw segment (INDEX/EQUITY/COMMODITY/CURRENCY/SPOT)
+    // Central market data store — the single source of truth every Live Market
+    // Monitor widget (indices, gainers/losers, commodities) reads from. There is
+    // exactly one live feed subscription (the Kotak Neo WebSocket on the backend);
+    // this store is how its ticks fan out to multiple widgets without each of
+    // them subscribing separately.
+    let marketDataStore = {};  // symbol -> { ltp, change, changePct, volume }
+
+    // Fixed panel memberships — Market Indices and Commodity Watch always show
+    // exactly these symbols (in this order); Top Gainers/Losers is computed
+    // dynamically from whichever symbols are tagged EQUITY in symbolSegments.
+    const INDEX_SYMBOLS = ["NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+    const INDEX_LABELS = {
+        NIFTY50: "NIFTY 50", BANKNIFTY: "NIFTY BANK", FINNIFTY: "FINNIFTY",
+        MIDCPNIFTY: "NIFTY MIDCAP SELECT", SENSEX: "SENSEX",
+    };
+    const COMMODITY_SYMBOLS = ["CRUDEOIL", "NATURALGAS", "GOLD", "SILVER", "COPPER", "ZINC", "ALUMINIUM", "LEAD", "NICKEL"];
+
     let allLogs = [];
     let activeLogFilter = "all";
     let activeEmployeeCode = null;
@@ -102,6 +119,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Live prices
         if (topic === "market_data" || topic === "tick") {
             updatePriceWidget(data.tick || data);
+        } else if (topic === "feed_connected") {
+            setFeedStatus(true);
+        } else if (topic === "feed_disconnected") {
+            setFeedStatus(false);
         } else if (topic === "order_filled" || topic === "paper_order_filled") {
             refreshTables();
             fetchEmployeeData();
@@ -196,8 +217,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Initial load
+    async function fetchSymbolGroups() {
+        try {
+            const res = await fetch(`${apiBase}/api/market/segments`);
+            symbolSegments = await res.json();
+        } catch (e) {
+            console.error("Failed to fetch market segments", e);
+        }
+    }
+
+    // Bulk-load whatever prices the server already has cached, so the panels
+    // aren't empty until the next live tick happens to arrive for each symbol.
+    async function fetchMarketSnapshot() {
+        try {
+            const res = await fetch(`${apiBase}/api/market/snapshot`);
+            const snapshot = await res.json();
+            Object.keys(snapshot).forEach(sym => {
+                const s = snapshot[sym];
+                marketDataStore[sym] = {
+                    ltp: s.ltp, change: s.change, changePct: s.change_pct, volume: s.volume,
+                };
+            });
+            renderMarketIndices();
+            renderCommodityWatch();
+            renderTopGainersLosers();
+        } catch (e) {
+            console.error("Failed to fetch market snapshot", e);
+        }
+    }
+
     async function fetchInitialData() {
+        await fetchSymbolGroups();
         await Promise.all([
+            fetchMarketSnapshot(),
+            fetchFeedStatus(),
             fetchEmployeeData(),
             fetchBrokerStatus(),
             fetchSafetyData(),
@@ -222,6 +275,7 @@ document.addEventListener("DOMContentLoaded", () => {
             fetchOptionFlowData();
             fetchTrendIntelData();
         }, 3000);
+        setInterval(fetchFeedStatus, 5000);
     }
 
     // Fetch employee registry
@@ -500,71 +554,195 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    // Live price widget
-    function updatePriceWidget(tick) {
-        const { symbol, close } = tick;
-        const prevPrice = activePrices[symbol];
-        activePrices[symbol] = close;
+    // Kotak Neo feed connection status — no simulated fallback, so when the
+    // feed is down we show "Waiting for live market feed..." instead of stale/fake prices.
+    // Distinct from "Market Closed", which means the feed is fine but there's
+    // genuinely no session right now (checked via fetchFeedStatus's market_session).
+    function setFeedStatus(connected) {
+        const badge = document.getElementById("feed-status-badge");
+        const groups = document.getElementById("market-groups");
+        if (badge) {
+            badge.textContent = connected ? "Feed Connected" : "Feed Disconnected";
+            badge.classList.toggle("feed-connected", connected);
+            badge.classList.toggle("feed-disconnected", !connected);
+        }
+        if (groups) {
+            groups.classList.toggle("feed-is-disconnected", !connected);
+            if (connected) groups.classList.remove("market-is-closed");
+        }
+        if (!connected) {
+            marketDataStore = {};
+            const commodityRow = document.getElementById("prices-row-commodity");
+            if (commodityRow) commodityRow.innerHTML = "";
+            renderMarketIndices();
+            renderTopGainersLosers();
+        }
+    }
 
-        let card = document.getElementById(`price-card-${symbol}`);
-        if (!card) {
-            card = document.createElement("div");
-            card.id = `price-card-${symbol}`;
-            card.className = "price-card";
-            card.innerHTML = `
-                <div class="symbol">${symbol}</div>
-                <div class="price" id="price-val-${symbol}">₹${close.toFixed(2)}</div>
-                <div class="change text-green" id="price-change-${symbol}">+0.00%</div>
-            `;
-            document.getElementById("prices-row").appendChild(card);
+    function setMarketClosed(closed) {
+        const groups = document.getElementById("market-groups");
+        if (!groups) return;
+        // Market Closed only makes sense to show when the feed itself is fine —
+        // if the feed is actually down, that overlay already takes priority.
+        if (closed && !groups.classList.contains("feed-is-disconnected")) {
+            groups.classList.add("market-is-closed");
         } else {
-            const priceVal = document.getElementById(`price-val-${symbol}`);
-            const priceChange = document.getElementById(`price-change-${symbol}`);
-            priceVal.textContent = `₹${close.toFixed(2)}`;
+            groups.classList.remove("market-is-closed");
+        }
+    }
 
-            if (prevPrice) {
-                const diff = close - prevPrice;
-                const percent = (diff / prevPrice) * 100;
-                priceChange.textContent = `${percent >= 0 ? '+' : ''}${percent.toFixed(2)}%`;
-                if (diff >= 0) {
-                    priceChange.className = "change text-green";
-                    priceVal.style.color = "var(--accent-green)";
-                } else {
-                    priceChange.className = "change text-red";
-                    priceVal.style.color = "var(--accent-red)";
-                }
-                setTimeout(() => { priceVal.style.color = ""; }, 300);
-            }
+    async function fetchFeedStatus() {
+        try {
+            const res = await fetch(`${apiBase}/api/market/feed`);
+            const data = await res.json();
+            setFeedStatus(!!data.stream_connected);
+            setMarketClosed(data.market_session !== "OPEN");
+        } catch (e) {
+            console.error("Failed to fetch feed status", e);
+            setFeedStatus(false);
+        }
+    }
+
+    // Briefly flashes an element green/up or red/down when its value changes.
+    function flashElement(el, direction) {
+        if (!el || !direction) return;
+        el.classList.remove("flash-up", "flash-down");
+        // Force reflow so the animation restarts even if it fires again quickly.
+        void el.offsetWidth;
+        el.classList.add(direction === "up" ? "flash-up" : "flash-down");
+    }
+
+    function populateSearchAndFocus(symbol) {
+        const input = document.getElementById("market-search");
+        if (!input) return;
+        input.value = symbol;
+        input.dispatchEvent(new Event("input"));
+        input.scrollIntoView({ behavior: "smooth", block: "center" });
+        input.focus();
+    }
+
+    // Live price widget — the single entry point every tick flows through.
+    // Updates the central store, then re-renders only the widget(s) that symbol
+    // belongs to (Market Indices / Commodity Watch / Top Gainers-Losers).
+    function updatePriceWidget(tick) {
+        const symbol = tick.symbol;
+        const ltp = typeof tick.ltp === "number" ? tick.ltp : parseFloat(tick.ltp);
+        if (!symbol || Number.isNaN(ltp)) return;
+
+        const prevEntry = marketDataStore[symbol];
+        const prevLtp = prevEntry ? prevEntry.ltp : undefined;
+        const prevClose = (prevEntry && prevEntry.prevClose) || tick.prev_close || ltp;
+        const change = prevClose ? ltp - prevClose : 0;
+        const changePct = prevClose ? (change / prevClose) * 100 : 0;
+
+        marketDataStore[symbol] = {
+            ltp, change, changePct, prevClose,
+            volume: typeof tick.volume === "number" ? tick.volume : (prevEntry ? prevEntry.volume : 0),
+        };
+
+        const direction = prevLtp === undefined ? null : (ltp > prevLtp ? "up" : ltp < prevLtp ? "down" : null);
+
+        if (INDEX_SYMBOLS.includes(symbol)) {
+            renderMarketIndices();
+            flashElement(document.getElementById(`index-card-${symbol}`), direction);
+            return;
         }
 
-        recalculateGainersLosers();
+        const segment = symbolSegments[symbol];
+        if (segment === "COMMODITY") {
+            renderCommodityWatch();
+            flashElement(document.getElementById(`price-card-${symbol}`), direction);
+            return;
+        }
+
+        if (segment === "EQUITY") {
+            renderTopGainersLosers();
+        }
     }
 
-    function recalculateGainersLosers() {
-        // Automatically rank and display gainers and losers
-        const tickers = Object.keys(activePrices).map(sym => {
-            const priceEl = document.getElementById(`price-change-${sym}`);
-            const pct = priceEl ? parseFloat(priceEl.textContent) : 0.0;
-            return { symbol: sym, pct };
-        });
-
-        tickers.sort((a, b) => b.pct - a.pct);
-        
-        const gainers = tickers.filter(t => t.pct > 0).slice(0, 3);
-        const losers = [...tickers].reverse().filter(t => t.pct < 0).slice(0, 3);
-
-        const gContainer = document.getElementById("top-gainers");
-        gContainer.innerHTML = gainers.length > 0 ? "" : "-";
-        gainers.forEach(g => {
-            gContainer.innerHTML += `<div style="display:flex; justify-content:space-between"><span>${g.symbol}</span><span class="text-green">+${g.pct.toFixed(2)}%</span></div>`;
-        });
-
-        const lContainer = document.getElementById("top-losers");
-        lContainer.innerHTML = losers.length > 0 ? "" : "-";
-        losers.forEach(l => {
-            lContainer.innerHTML += `<div style="display:flex; justify-content:space-between"><span>${l.symbol}</span><span class="text-red">${l.pct.toFixed(2)}%</span></div>`;
-        });
+    // ── Market Indices panel ──────────────────────────────────────────────────
+    function renderMarketIndices() {
+        const row = document.getElementById("indices-row");
+        if (!row) return;
+        row.innerHTML = INDEX_SYMBOLS.map(sym => {
+            const d = marketDataStore[sym];
+            const label = INDEX_LABELS[sym] || sym;
+            if (!d) {
+                return `<div class="index-card" id="index-card-${sym}">
+                    <div class="index-name">${label}</div>
+                    <div class="index-ltp text-muted">—</div>
+                    <div class="index-change text-muted">Waiting for tick...</div>
+                </div>`;
+            }
+            const cls = d.change >= 0 ? "text-green" : "text-red";
+            const sign = d.change >= 0 ? "+" : "";
+            return `<div class="index-card" id="index-card-${sym}">
+                <div class="index-name">${label}</div>
+                <div class="index-ltp">${d.ltp.toFixed(2)}</div>
+                <div class="index-change ${cls}">${sign}${d.change.toFixed(2)} (${sign}${d.changePct.toFixed(2)}%)</div>
+            </div>`;
+        }).join("");
     }
+
+    // ── Commodity Watch panel ─────────────────────────────────────────────────
+    function renderCommodityWatch() {
+        const row = document.getElementById("prices-row-commodity");
+        if (!row) return;
+        row.innerHTML = COMMODITY_SYMBOLS.map(sym => {
+            const d = marketDataStore[sym];
+            if (!d) {
+                return `<div class="price-card" id="price-card-${sym}">
+                    <div class="symbol">${sym}</div>
+                    <div class="price text-muted">—</div>
+                    <div class="change text-muted">Waiting for tick...</div>
+                </div>`;
+            }
+            const cls = d.change >= 0 ? "text-green" : "text-red";
+            const sign = d.change >= 0 ? "+" : "";
+            return `<div class="price-card" id="price-card-${sym}">
+                <div class="symbol">${sym}</div>
+                <div class="price">₹${d.ltp.toFixed(2)}</div>
+                <div class="change ${cls}">${sign}${d.change.toFixed(2)} (${sign}${d.changePct.toFixed(2)}%)</div>
+            </div>`;
+        }).join("");
+    }
+
+    // ── Top Gainers / Top Losers panels ───────────────────────────────────────
+    function renderTopGainersLosers() {
+        const equitySymbols = Object.keys(symbolSegments).filter(sym => symbolSegments[sym] === "EQUITY");
+        const ranked = equitySymbols
+            .filter(sym => marketDataStore[sym])
+            .map(sym => ({ symbol: sym, ...marketDataStore[sym] }));
+
+        ranked.sort((a, b) => b.changePct - a.changePct);
+        const gainers = ranked.filter(r => r.changePct > 0).slice(0, 10);
+        const losers = ranked.filter(r => r.changePct < 0).slice(-10).reverse();
+
+        renderRankedTable("top-gainers-body", gainers, "up");
+        renderRankedTable("top-losers-body", losers, "down");
+    }
+
+    function renderRankedTable(tbodyId, rows, direction) {
+        const tbody = document.getElementById(tbodyId);
+        if (!tbody) return;
+        if (rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="3" class="mini-table-empty">-</td></tr>`;
+            return;
+        }
+        const icon = direction === "up" ? "▲" : "▼";
+        const cls = direction === "up" ? "text-green" : "text-red";
+        tbody.innerHTML = rows.map(r => `
+            <tr onclick="window.selectMarketSymbol('${r.symbol}')">
+                <td class="sym-cell">${r.symbol}</td>
+                <td>${r.ltp.toFixed(2)}</td>
+                <td class="${cls}">${icon} ${r.changePct.toFixed(2)}%</td>
+            </tr>
+        `).join("");
+    }
+
+    window.selectMarketSymbol = function(symbol) {
+        populateSearchAndFocus(symbol);
+    };
 
     // Logs rendering & filtering
     function matchesFilter(sender, topic, filter) {

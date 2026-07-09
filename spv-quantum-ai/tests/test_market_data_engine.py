@@ -1,6 +1,8 @@
 import pytest
 import asyncio
+import json
 import unittest.mock as mock
+from unittest.mock import AsyncMock, MagicMock
 from market.models import MarketData, Timeframe, MarketSession, FeedStatus
 from market.cache import DataCacheManager
 from market.registry import SymbolRegistry
@@ -62,7 +64,7 @@ def test_instrument_manager_lookup() -> None:
     mgr = InstrumentManager()
     inst = mgr.get("NIFTY50")
     assert inst is not None
-    assert inst["lot_size"] == 50
+    assert inst["lot_size"] == 65  # real NSE NIFTY50 lot size
     assert mgr.get_token("NIFTY50") == "26000"
     assert mgr.get_by_token("26000") == "NIFTY50"
 
@@ -132,13 +134,23 @@ async def test_feed_health_monitor_stale_detection() -> None:
     monitor.signal_connected()
     await monitor.start()
 
-    # Don't call record_tick → monitor detects stale after 0.1s
+    # Don't call record_tick → monitor detects stale after 0.1s.
+    # DEGRADED (connection alive, ticks momentarily sparse) intentionally does
+    # NOT fire feed_disconnected anymore — only a genuine DISCONNECTED does,
+    # so the UI doesn't wipe live prices during a normal quiet moment.
+    for _ in range(20):
+        if monitor.get_status() == FeedStatus.DEGRADED:
+            break
+        await asyncio.sleep(0.05)
+
+    assert monitor.get_status() == FeedStatus.DEGRADED
+    assert len(received) == 0
+
+    monitor.signal_disconnected("test forced disconnect")
     for _ in range(20):
         if len(received) >= 1:
             break
         await asyncio.sleep(0.05)
-
-    assert monitor.get_status() in (FeedStatus.DEGRADED, FeedStatus.DISCONNECTED)
     assert len(received) >= 1
 
     await monitor.stop()
@@ -184,26 +196,78 @@ async def test_market_status_transitions() -> None:
 # ── Full MarketDataManager integration ────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_market_data_manager_integration() -> None:
+async def test_market_data_manager_has_no_price_source_without_kotak() -> None:
+    """Without a reachable Kotak Neo feed, the manager must not fabricate any prices."""
     event_bus.start()
     mgr = MarketDataManager()
     await mgr.start()
-    assert mgr.stream.is_connected() is True
-    assert mgr.status.get_status() == MarketSession.OPEN
+    assert mgr.stream.is_connected() is False
+    # Session status now reflects real NSE hours (9:15-15:30 IST, Mon-Fri), not
+    # a hardcoded OPEN — compare against the same real-time computation rather
+    # than assuming a fixed value that would only be true during market hours.
+    assert mgr.status.get_status() == mgr.status.compute_real_session()
 
-    # Allow streaming to produce ticks
-    await asyncio.sleep(2.0)
-
-    # At least one symbol should have received a tick
-    any_tick = False
+    await asyncio.sleep(0.2)
     for sym in mgr.registry.get_symbols():
         t = await mgr.cache.get_tick(sym)
-        if t and t.ltp > 0:
-            any_tick = True
-            break
-    assert any_tick
+        assert t is None
 
     await mgr.stop()
+    assert mgr.status.get_status() == MarketSession.CLOSED
+    await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_market_data_manager_integration_with_live_kotak_feed() -> None:
+    """With a (mocked) authenticated Kotak Neo session, a real feed message flows
+    through the full pipeline: WebSocketStreamManager -> MarketDataManager -> cache."""
+    event_bus.start()
+    mgr = MarketDataManager()
+
+    mock_client = MagicMock()
+    mock_config = mock_client.api_client.configuration
+
+    def fake_totp_login(mobile_number=None, ucc=None, totp=None):
+        mock_config.view_token = "view-token"
+        mock_config.sid = "sid"
+        return {"data": {"token": "view-token", "sid": "sid"}}
+
+    def fake_totp_validate(mpin=None):
+        mock_config.edit_token = "edit-token"
+        mock_config.edit_sid = "edit-sid"
+        return {"data": {"token": "edit-token", "sid": "edit-sid"}}
+
+    mock_totp_api = MagicMock()
+    mock_totp_api.totp_login.side_effect = fake_totp_login
+    mock_totp_api.totp_validate.side_effect = fake_totp_validate
+
+    with mock.patch("brokers.kotak_neo.settings") as mock_settings:
+        mock_settings.KOTAK_NEO_CONSUMER_KEY = "test-key"
+        mock_settings.KOTAK_NEO_MOBILE_NUMBER = "+919999999999"
+        mock_settings.KOTAK_NEO_UCC = "TESTUCC"
+        mock_settings.KOTAK_NEO_MPIN = "123456"
+        mock_settings.KOTAK_NEO_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
+        mock_settings.KOTAK_NEO_ENVIRONMENT = "prod"
+
+        with mock.patch("brokers.kotak_neo.NeoAPI", return_value=mock_client):
+            with mock.patch("brokers.kotak_neo.TotpAPI", return_value=mock_totp_api):
+                await mgr.start()
+                await asyncio.sleep(0.2)
+                assert mgr.stream.is_connected() is False  # on_open not fired by the mock yet
+
+                # Simulate the SDK's background thread delivering a live tick.
+                mock_client.on_message({
+                    "type": "stock_feed",
+                    "data": [{"tk": "26000", "e": "nse_cm", "iv": "24300.5", "ic": "24200.0"}],
+                })
+                await asyncio.sleep(0.1)
+
+                tick = await mgr.cache.get_tick("NIFTY50")
+                assert tick is not None
+                assert tick.ltp == 24300.5
+
+                await mgr.stop()
+
     assert mgr.status.get_status() == MarketSession.CLOSED
     await event_bus.stop()
 
@@ -221,14 +285,20 @@ async def test_websocket_reconnect_failure_event() -> None:
 
     await event_bus.subscribe("feed_disconnected", cb)
 
-    monitor = FeedHealthMonitor()
     from market.websocket import WebSocketStreamManager
-    stream = WebSocketStreamManager(on_raw_tick=lambda x: None, health_monitor=monitor)
+    monitor = FeedHealthMonitor()
+    stream = WebSocketStreamManager(
+        on_raw_tick=lambda x: None,
+        health_monitor=monitor,
+        instruments=InstrumentManager(),
+        registry=SymbolRegistry(),
+    )
     stream._max_reconnects = 2
 
-    with mock.patch("random.random", return_value=1.0):
-        await stream._reconnect()   # attempt 1
-        await stream._reconnect()   # attempt 2 → fires event
+    with mock.patch("asyncio.sleep", new=AsyncMock()):
+        await stream._backoff()   # attempt 1
+        await stream._backoff()   # attempt 2 → fires event
+        assert stream.is_connected() is False
 
     for _ in range(20):
         if len(received) >= 1:

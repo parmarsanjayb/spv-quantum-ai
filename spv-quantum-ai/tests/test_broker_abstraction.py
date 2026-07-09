@@ -1,12 +1,27 @@
 import pytest
 import asyncio
+import time
+import unittest.mock as mock
+from unittest.mock import MagicMock
 from datetime import datetime, timezone
 from core.bus import event_bus, EventModel
 from brokers.models import BrokerResponse, BrokerState, Order, OrderSide, OrderType, OrderStatus
 from brokers.resolver import BrokerResolver
 from brokers.factory import BrokerFactory
 from brokers.registry import BrokerRegistry
+from brokers.kotak_neo import KotakAuthenticationManager
 from brokers import broker_engine
+
+
+def _mock_kotak_authentication():
+    """Patches the class method so broker_manager's internally-created
+    KotakNeoAdapter authenticates without hitting Kotak's real API."""
+    async def fake_authenticate(self) -> bool:
+        self.client = MagicMock()
+        self.session_token = "fake-edit-token-for-tests"
+        self.token_expiry = time.time() + 480.0
+        return True
+    return mock.patch.object(KotakAuthenticationManager, "authenticate", fake_authenticate)
 
 @pytest.mark.asyncio
 async def test_broker_resolver_and_registry():
@@ -46,34 +61,35 @@ async def test_broker_engine_lifecycle_and_events():
     await event_bus.subscribe("broker_order_placed", capture_event)
 
     try:
-        # Test connection
-        resp = await broker_engine.connect("kotak_neo")
-        assert resp.success is True
-        assert broker_engine.get_broker_state("kotak_neo") == BrokerState.CONNECTED
+        with _mock_kotak_authentication():
+            # Test connection
+            resp = await broker_engine.connect("kotak_neo")
+            assert resp.success is True
+            assert broker_engine.get_broker_state("kotak_neo") == BrokerState.CONNECTED
 
-        await asyncio.sleep(0.05)
-        assert any(e.event_type == "broker_connected" for e in events)
+            await asyncio.sleep(0.05)
+            assert any(e.event_type == "broker_connected" for e in events)
 
-        # Test place order
-        order_resp = await broker_engine.place_order(
-            symbol="INFY",
-            side=OrderSide.BUY,
-            quantity=5.0,
-            order_type=OrderType.MARKET,
-            price=1400.0
-        )
-        assert order_resp.success is True
-        
-        await asyncio.sleep(0.05)
-        assert any(e.event_type == "broker_order_placed" for e in events)
+            # Test place order
+            order_resp = await broker_engine.place_order(
+                symbol="INFY",
+                side=OrderSide.BUY,
+                quantity=5.0,
+                order_type=OrderType.MARKET,
+                price=1400.0
+            )
+            assert order_resp.success is True
 
-        # Test disconnect
-        disc_resp = await broker_engine.disconnect("kotak_neo")
-        assert disc_resp.success is True
-        assert broker_engine.get_broker_state("kotak_neo") == BrokerState.DISCONNECTED
+            await asyncio.sleep(0.05)
+            assert any(e.event_type == "broker_order_placed" for e in events)
 
-        await asyncio.sleep(0.05)
-        assert any(e.event_type == "broker_disconnected" for e in events)
-        
+            # Test disconnect
+            disc_resp = await broker_engine.disconnect("kotak_neo")
+            assert disc_resp.success is True
+            assert broker_engine.get_broker_state("kotak_neo") == BrokerState.DISCONNECTED
+
+            await asyncio.sleep(0.05)
+            assert any(e.event_type == "broker_disconnected" for e in events)
+
     finally:
         await event_bus.stop()

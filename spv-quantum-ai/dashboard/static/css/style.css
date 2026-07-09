@@ -57,6 +57,12 @@ body {
     gap: 0.75rem;
 }
 
+.logo-mark {
+    width: 30px;
+    height: 30px;
+    filter: drop-shadow(0 0 6px rgba(0, 242, 254, 0.25));
+}
+
 .logo-area h1 {
     font-size: 1.25rem;
     font-weight: 700;
@@ -214,6 +220,55 @@ body {
 }
 
 /* LIVE MARKET PANEL & PRICE CARDS */
+.feed-status-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.6rem;
+    border-radius: 20px;
+    border: 1px solid transparent;
+}
+
+.feed-status-badge.feed-connected {
+    color: var(--accent-green);
+    background: rgba(0, 230, 118, 0.08);
+    border-color: rgba(0, 230, 118, 0.3);
+}
+
+.feed-status-badge.feed-disconnected {
+    color: var(--accent-red);
+    background: rgba(255, 82, 82, 0.08);
+    border-color: rgba(255, 82, 82, 0.3);
+}
+
+.market-groups {
+    position: relative;
+}
+
+.feed-disconnected-overlay {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1.5rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent-red);
+    background: rgba(255, 82, 82, 0.05);
+    border: 1px dashed rgba(255, 82, 82, 0.3);
+    border-radius: 10px;
+    margin-bottom: 0.6rem;
+}
+
+.market-groups.feed-is-disconnected .feed-disconnected-overlay {
+    display: flex;
+}
+
+.market-groups.feed-is-disconnected .market-group {
+    display: none;
+}
+
 .market-controls {
     margin-bottom: 0.75rem;
 }
@@ -229,13 +284,36 @@ body {
     outline: none;
 }
 
+.market-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.market-group-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 0.3rem;
+}
+
 .prices-container {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
-    max-height: 250px;
+    max-height: 130px;
     overflow-y: auto;
     padding-right: 2px;
+}
+
+.prices-container:empty::after {
+    content: "No instruments";
+    grid-column: 1 / -1;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    opacity: 0.5;
 }
 
 .price-card {
@@ -303,6 +381,140 @@ body {
     flex-direction: column;
     gap: 0.15rem;
 }
+
+/* MARKET INDICES / GAINERS-LOSERS / COMMODITY WATCH */
+.accent-green-text { color: var(--accent-green); }
+.accent-red-text   { color: var(--accent-red); }
+
+.market-closed-overlay {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0.6rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-orange);
+    background: rgba(255, 159, 10, 0.06);
+    border: 1px dashed rgba(255, 159, 10, 0.3);
+    border-radius: 10px;
+    margin-bottom: 0.6rem;
+}
+
+.market-groups.market-is-closed .market-closed-overlay {
+    display: flex;
+}
+
+.indices-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.6rem;
+}
+
+.index-card {
+    background: rgba(0, 242, 254, 0.03);
+    border: 1px solid var(--border-glass);
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.index-card:hover {
+    border-color: rgba(0, 242, 254, 0.35);
+    box-shadow: 0 0 12px rgba(0, 242, 254, 0.1);
+}
+
+.index-card .index-name {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--accent-blue);
+    text-shadow: 0 0 8px rgba(0, 242, 254, 0.35);
+    text-transform: uppercase;
+}
+
+.index-card .index-ltp {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 0.15rem;
+}
+
+.index-card .index-change {
+    font-size: 0.72rem;
+    font-weight: 500;
+    margin-top: 0.1rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.gainers-losers-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.mini-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.mini-table thead th {
+    text-align: left;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0.2rem 0.4rem;
+    border-bottom: 1px solid var(--border-glass);
+}
+
+.mini-table tbody td {
+    padding: 0.3rem 0.4rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.mini-table tbody tr {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.mini-table tbody tr:hover {
+    background: rgba(0, 242, 254, 0.05);
+}
+
+.mini-table .mini-table-empty {
+    text-align: center;
+    color: var(--text-muted);
+    cursor: default;
+    padding: 0.75rem;
+}
+
+.mini-table .mini-table-empty:hover {
+    background: transparent;
+}
+
+.mini-table .sym-cell {
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+}
+
+/* Flash animation on price update */
+@keyframes flash-green-bg {
+    0%   { background-color: rgba(0, 245, 160, 0.28); }
+    100% { background-color: transparent; }
+}
+@keyframes flash-red-bg {
+    0%   { background-color: rgba(255, 59, 48, 0.28); }
+    100% { background-color: transparent; }
+}
+.flash-up   { animation: flash-green-bg 0.8s ease-out; }
+.flash-down { animation: flash-red-bg 0.8s ease-out; }
 
 /* EMPLOYEE PANEL */
 .emp-profile-header {

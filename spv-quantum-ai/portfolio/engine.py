@@ -82,10 +82,14 @@ class PortfolioEngine:
 
     async def _on_tick(self, event: EventModel) -> None:
         try:
-            payload = event.payload
-            symbol = payload.get("symbol")
-            ltp = float(payload.get("ltp", 0.0))
-            
+            # "tick" events are published as TickEvent{event_id, tick: MarketData},
+            # not a flat {symbol, ltp} dict — reading those keys at the top level
+            # always missed, so this handler never actually ran and every
+            # position's LTP stayed frozen at its fill price forever.
+            tick = event.payload.get("tick", event.payload)
+            symbol = tick.get("symbol")
+            ltp = float(tick.get("ltp", 0.0))
+
             if not symbol or ltp <= 0:
                 return
                 

@@ -1,13 +1,19 @@
+import base64
 import pytest
 import asyncio
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from core.bus import event_bus, EventModel
+from core.config import settings
 from dashboard.main import app
+
+def _basic_auth_header() -> dict:
+    token = base64.b64encode(f"{settings.DASHBOARD_USERNAME}:{settings.DASHBOARD_PASSWORD}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
 
 @pytest.mark.asyncio
 async def test_websocket_connection_and_broadcast():
-    client = TestClient(app)
+    client = TestClient(app, headers=_basic_auth_header())
     
     # Start event bus (uses currently running asyncio test loop)
     event_bus.start()
@@ -50,7 +56,7 @@ async def test_websocket_broadcast_serializes_nested_datetime():
     behind WebSocket.send_json() cannot serialize those directly, so the
     broadcaster must run payloads through jsonable_encoder() first — otherwise
     every broadcast silently fails and the client never receives anything."""
-    client = TestClient(app)
+    client = TestClient(app, headers=_basic_auth_header())
     event_bus.start()
 
     try:

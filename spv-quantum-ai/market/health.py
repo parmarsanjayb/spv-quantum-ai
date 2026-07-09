@@ -98,7 +98,11 @@ class FeedHealthMonitor:
         self._status = new_status
         logger.info("Feed status changed", old=old.value, new=new_status.value)
 
-        if new_status == FeedStatus.DISCONNECTED or new_status == FeedStatus.DEGRADED:
+        if new_status == FeedStatus.DISCONNECTED:
+            # DEGRADED means the connection is still alive but ticks are momentarily
+            # sparse (e.g. after market hours, or a quiet symbol) — that's normal and
+            # shouldn't make the UI wipe out the last known prices. Only a genuine
+            # DISCONNECTED (socket actually dropped) should do that.
             evt = FeedDisconnectedEvent(reason=reason or new_status.value)
             await event_bus.publish(EventModel(
                 event_type   = "feed_disconnected",

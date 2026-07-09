@@ -110,21 +110,61 @@
             <div class="grid-col flex-col">
                 <!-- LIVE MARKET PANEL -->
                 <div class="card flex-grow-1">
-                    <h2>Live Market Monitor</h2>
+                    <div class="card-header-actions">
+                        <h2>Live Market Monitor</h2>
+                        <span id="feed-status-badge" class="feed-status-badge feed-disconnected">Feed Disconnected</span>
+                    </div>
                     <div class="market-controls">
                         <input type="text" id="market-search" placeholder="Search symbol...">
                     </div>
-                    <div class="prices-container" id="prices-row">
-                        <!-- Dynamic price cards -->
-                    </div>
-                    <div class="gainers-losers-panel">
-                        <div class="gl-box">
-                            <span class="box-title text-green">Top Gainers</span>
-                            <div id="top-gainers" class="gl-list">-</div>
+                    <div class="market-groups" id="market-groups">
+                        <div class="feed-disconnected-overlay" id="feed-disconnected-overlay">
+                            Waiting for live market feed...
                         </div>
-                        <div class="gl-box">
-                            <span class="box-title text-red">Top Losers</span>
-                            <div id="top-losers" class="gl-list">-</div>
+                        <div class="market-closed-overlay" id="market-closed-overlay">
+                            Market Closed — showing last traded values
+                        </div>
+
+                        <!-- MARKET INDICES -->
+                        <div class="market-group">
+                            <div class="market-group-title">Market Indices</div>
+                            <div class="indices-row" id="indices-row">
+                                <!-- Dynamic index cards -->
+                            </div>
+                        </div>
+
+                        <!-- TOP GAINERS / LOSERS -->
+                        <div class="gainers-losers-grid">
+                            <div class="market-group">
+                                <div class="market-group-title accent-green-text">Top Gainers</div>
+                                <table class="mini-table">
+                                    <thead>
+                                        <tr><th>Symbol</th><th>LTP</th><th>Chg %</th></tr>
+                                    </thead>
+                                    <tbody id="top-gainers-body">
+                                        <tr><td colspan="3" class="mini-table-empty">-</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="market-group">
+                                <div class="market-group-title accent-red-text">Top Losers</div>
+                                <table class="mini-table">
+                                    <thead>
+                                        <tr><th>Symbol</th><th>LTP</th><th>Chg %</th></tr>
+                                    </thead>
+                                    <tbody id="top-losers-body">
+                                        <tr><td colspan="3" class="mini-table-empty">-</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- COMMODITY WATCH -->
+                        <div class="market-group">
+                            <div class="market-group-title">Commodity Watch</div>
+                            <div class="prices-container" id="prices-row-commodity">
+                                <!-- Dynamic commodity cards -->
+                            </div>
                         </div>
                     </div>
                 </div>

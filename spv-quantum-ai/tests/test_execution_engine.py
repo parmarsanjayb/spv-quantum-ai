@@ -9,6 +9,8 @@ from execution.engine import ExecutionEngine
 from agents.execution_agent import ExecutionAgent
 from core.bus import event_bus, EventModel
 from brokers.manager import broker_manager
+from market.manager import market_data_manager
+from market.models import MarketData
 
 # ── Validator Tests ───────────────────────────────────────────────────────────
 
@@ -110,7 +112,11 @@ async def test_execution_engine_pipeline():
         filled_events.append(evt)
         
     await event_bus.subscribe("order_filled", cb)
-    
+
+    # Market orders now fill at the real cached LTP, never a placeholder —
+    # seed one so this MARKET order has a real price to fill against.
+    await market_data_manager.cache.update_tick(MarketData(symbol="ETHUSD", ltp=3500.0))
+
     # Submit valid market order
     req = {"symbol": "ETHUSD", "side": "BUY", "quantity": 2.0, "type": "MARKET"}
     order = await engine.submit_order_request(req)

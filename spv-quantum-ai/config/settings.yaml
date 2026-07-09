@@ -39,12 +39,6 @@ decision_scoring:
     market_regime: 0.2
     risk_status: 0.25
     strategy_match: 0.25
-market_feed:
-  active: mock
-  binance:
-    url: wss://stream.binance.com:9443/ws
-  kotak:
-    url: wss://neo-api.kotaksecurities.com/apim/neotrade/1.0
 risk_limits:
   cooldown_period_minutes: 30
   daily_loss_limit_usd: 600.0

@@ -43,6 +43,10 @@ class DataCacheManager:
         async with self._lock:
             return self._ticks.get(symbol)
 
+    async def get_all_ticks(self) -> Dict[str, MarketData]:
+        async with self._lock:
+            return self._ticks.copy()
+
     # ── Candle ────────────────────────────────────────────────────────────────
 
     async def update_candle(self, candle: Candle) -> None:
