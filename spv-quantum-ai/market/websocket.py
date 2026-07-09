@@ -134,17 +134,27 @@ class WebSocketStreamManager:
                 )
 
                 # Stay on this authenticated session until the token needs
-                # refreshing or the feed reports itself disconnected.
-                while self._running and auth_mgr.is_token_valid():
+                # refreshing or the feed reports itself disconnected. Checking
+                # self._connected (set by the on_open/on_close/on_error
+                # callbacks) is what lets a real mid-session drop be noticed
+                # within ~5s instead of sitting dead until the next scheduled
+                # token refresh (previously up to 8 minutes later).
+                while self._running and self._connected and auth_mgr.is_token_valid():
                     await asyncio.sleep(5.0)
 
                 if not self._running:
                     break
 
-                logger.info("Kotak Neo session token expiring; re-authenticating and re-subscribing.")
-                self._connected = False
-                self._close_socket()
-                self._health.signal_disconnected("Session refresh")
+                if not self._connected:
+                    logger.info("Kotak Neo feed connection lost; reconnecting.")
+                    self._close_socket()
+                    self._health.signal_disconnected("Feed connection lost")
+                    await self._backoff()
+                else:
+                    logger.info("Kotak Neo session token expiring; re-authenticating and re-subscribing.")
+                    self._connected = False
+                    self._close_socket()
+                    self._health.signal_disconnected("Session refresh")
 
             except asyncio.CancelledError:
                 break
