@@ -6,7 +6,7 @@
     <title>SPV Quantum AI - Enterprise Trading Terminal v2</title>
     <link rel="icon" type="image/png" href="/static/img/favicon.png">
     <!-- Include Stylesheet -->
-    <link rel="stylesheet" href="/static/css/style.css?v=2.4.0">
+    <link rel="stylesheet" href="/static/css/style.css?v=2.5.0">
     <!-- Lucide Icons for clean visuals -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js for premium visualization charts -->
@@ -14,53 +14,63 @@
 </head>
 <body>
 
-    <!-- TOP BAR -->
-    <header class="top-bar">
-        <div class="logo-area">
-            <img src="/static/img/logo-mark.png" alt="SPV Quantum" class="logo-mark">
-            <span class="status-indicator" id="status-indicator"></span>
-            <h1>SPV QUANTUM AI <span class="term-ver">v2.0 // RC-2</span></h1>
-        </div>
-        
-        <nav class="nav-tabs">
-            <button class="tab-btn active" id="btn-tab-terminal" onclick="switchTab('tab-terminal')">Trade</button>
-            <button class="tab-btn" id="btn-tab-strategy" onclick="switchTab('tab-strategy')">Strategy Setup</button>
-            <button class="tab-btn" id="btn-tab-studio" onclick="switchTab('tab-studio')">Strategy Studio</button>
-            <button class="tab-btn" id="btn-tab-backtest" onclick="switchTab('tab-backtest')">Backtest</button>
-            <button class="tab-btn" id="btn-tab-monitoring" onclick="switchTab('tab-monitoring')">AI Employee Monitor</button>
-            <button class="tab-btn" id="btn-tab-decisions" onclick="switchTab('tab-decisions')">Decision Log</button>
-            <button class="tab-btn" id="btn-tab-performance" onclick="switchTab('tab-performance')">Performance &amp; Charts</button>
-            <button class="tab-btn" id="btn-tab-ipo" onclick="switchTab('tab-ipo')" style="border-left: 1px solid var(--border-glass); margin-left: 0.4rem; padding-left: 1rem;">IPO Research</button>
-            <button class="tab-btn" id="btn-tab-settings" onclick="switchTab('tab-settings')">System Settings</button>
-        </nav>
-        
-        <div class="top-bar-metrics">
-            <div class="top-metric">
-                <span class="label">Time</span>
-                <span class="value" id="top-time">-</span>
+    <div class="app-shell">
+        <!-- LEFT SIDEBAR NAV -->
+        <aside class="side-nav">
+            <div class="logo-area">
+                <img src="/static/img/logo-mark.png" alt="SPV Quantum" class="logo-mark">
+                <div>
+                    <h1>SPV QUANTUM AI</h1>
+                    <span class="term-ver">v2.0 // RC-2</span>
+                </div>
             </div>
-            <div class="top-metric">
-                <span class="label">Broker</span>
-                <span class="value" id="top-broker">-</span>
+
+            <nav class="nav-tabs">
+                <button class="tab-btn active" id="btn-tab-terminal" onclick="switchTab('tab-terminal')">Trade</button>
+                <button class="tab-btn" id="btn-tab-strategy" onclick="switchTab('tab-strategy')">Strategy Setup</button>
+                <button class="tab-btn" id="btn-tab-studio" onclick="switchTab('tab-studio')">Strategy Studio</button>
+                <button class="tab-btn" id="btn-tab-backtest" onclick="switchTab('tab-backtest')">Backtest</button>
+                <button class="tab-btn" id="btn-tab-monitoring" onclick="switchTab('tab-monitoring')">AI Employee Monitor</button>
+                <button class="tab-btn" id="btn-tab-decisions" onclick="switchTab('tab-decisions')">Decision Log</button>
+                <button class="tab-btn" id="btn-tab-performance" onclick="switchTab('tab-performance')">Performance &amp; Charts</button>
+                <div class="nav-tabs-divider"></div>
+                <button class="tab-btn" id="btn-tab-ipo" onclick="switchTab('tab-ipo')">IPO Research</button>
+                <div class="nav-tabs-divider"></div>
+                <button class="tab-btn" id="btn-tab-settings" onclick="switchTab('tab-settings')">System Settings</button>
+            </nav>
+
+            <div class="side-nav-status">
+                <span class="status-indicator" id="status-indicator"></span>
+                <span id="connection-status">DISCONNECTED</span>
             </div>
-            <div class="top-metric">
-                <span class="label">WebSockets</span>
-                <span class="value" id="connection-status">DISCONNECTED</span>
-            </div>
-            <div class="top-metric">
-                <span class="label">Mode</span>
-                <span class="value" id="top-mode">-</span>
-            </div>
-            <div class="top-metric">
-                <span class="label">AI Employee</span>
-                <span class="value accent-blue" id="top-employee">-</span>
-            </div>
-            <div class="top-metric">
-                <span class="label">Health</span>
-                <span class="value" id="top-health">-</span>
-            </div>
-        </div>
-    </header>
+        </aside>
+
+        <div class="main-content">
+            <!-- TOP BAR (metrics only now) -->
+            <header class="top-bar">
+                <div class="top-bar-metrics">
+                    <div class="top-metric">
+                        <span class="label">Time</span>
+                        <span class="value" id="top-time">-</span>
+                    </div>
+                    <div class="top-metric">
+                        <span class="label">Broker</span>
+                        <span class="value" id="top-broker">-</span>
+                    </div>
+                    <div class="top-metric">
+                        <span class="label">Mode</span>
+                        <span class="value" id="top-mode">-</span>
+                    </div>
+                    <div class="top-metric">
+                        <span class="label">AI Employee</span>
+                        <span class="value accent-blue" id="top-employee">-</span>
+                    </div>
+                    <div class="top-metric">
+                        <span class="label">Health</span>
+                        <span class="value" id="top-health">-</span>
+                    </div>
+                </div>
+            </header>
 
     <div class="dashboard-wrapper">
         <!-- SUMMARY CARDS ROW -->
@@ -832,6 +842,8 @@
             </div>
         </div>
 
+    </div>
+        </div>
     </div>
 
     <!-- Load App Controller Script -->
