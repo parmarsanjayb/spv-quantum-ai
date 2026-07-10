@@ -58,9 +58,9 @@ body {
 }
 
 .logo-mark {
-    width: 30px;
-    height: 30px;
-    filter: drop-shadow(0 0 6px rgba(0, 242, 254, 0.25));
+    height: 34px;
+    width: auto;
+    filter: drop-shadow(0 0 5px rgba(255, 140, 0, 0.2));
 }
 
 .logo-area h1 {
