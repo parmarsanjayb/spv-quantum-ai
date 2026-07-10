@@ -162,3 +162,117 @@ class StrategyDefinitionModel(Base):
 
     def __repr__(self) -> str:
         return f"<StrategyDefinition(name={self.strategy_name}, v={self.version}, active={self.is_active})>"
+
+
+# ── IPO Analysis Module ────────────────────────────────────────────────────────
+# Independent of the trading/strategy/backtest tables above — the IPO module
+# reads and writes only these tables, never the trading ones.
+
+class IPOIssueModel(Base):
+    """
+    One row per IPO. `raw_data` keeps the full source payload (from NSE)
+    verbatim, so newly-noticed fields don't require a migration — every
+    named column below is just a convenience extraction of what's already
+    in raw_data, never a value invented independently of it.
+    """
+    __tablename__ = "ipo_issues"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(50), nullable=False, unique=True, index=True)
+    company_name = Column(String(300), nullable=False)
+    status = Column(String(20), nullable=False, index=True)  # UPCOMING, OPEN, CLOSED, LISTED
+    security_type = Column(String(20), nullable=True)  # EQ, SME
+    price_band_low = Column(Float, nullable=True)
+    price_band_high = Column(Float, nullable=True)
+    lot_size = Column(Integer, nullable=True)
+    issue_size = Column(Float, nullable=True)  # number of shares offered
+    issue_start_date = Column(DateTime, nullable=True)
+    issue_end_date = Column(DateTime, nullable=True)
+    listing_date = Column(DateTime, nullable=True)
+    listing_price = Column(Float, nullable=True)
+    source = Column(String(50), default="NSE")
+    raw_data = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<IPOIssue(symbol={self.symbol}, status={self.status})>"
+
+
+class IPOSubscriptionSnapshotModel(Base):
+    """
+    Time-series subscription data — how many times a category was
+    subscribed, at the moment it was collected. An IPO's subscription
+    changes throughout its open window, so this is append-only, not a
+    single current value on IPOIssueModel.
+    """
+    __tablename__ = "ipo_subscription_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ipo_symbol = Column(String(50), nullable=False, index=True)
+    category = Column(String(50), nullable=False)  # Total, QIB, NII, Retail, etc. (as NSE reports them)
+    shares_offered = Column(Float, nullable=True)
+    shares_bid = Column(Float, nullable=True)
+    subscription_times = Column(Float, nullable=True)  # noOfTime from NSE — the actual subscription multiple
+    snapshot_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    def __repr__(self) -> str:
+        return f"<IPOSubscription(symbol={self.ipo_symbol}, category={self.category}, x={self.subscription_times})>"
+
+
+class IPOAnalystReportModel(Base):
+    """One employee's analysis of one IPO. Score/confidence must be derived
+    from real stored data (IPOIssueModel / IPOSubscriptionSnapshotModel) —
+    an analyst with no real data for its specialty does not produce a row
+    here rather than inventing a number."""
+    __tablename__ = "ipo_analyst_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ipo_symbol = Column(String(50), nullable=False, index=True)
+    analyst_name = Column(String(100), nullable=False, index=True)
+    score = Column(Float, nullable=False)  # 0-100
+    confidence = Column(Float, nullable=False)  # 0-100
+    reason = Column(String(1000), nullable=False)
+    advantages = Column(JSON, nullable=True)  # list[str]
+    risks = Column(JSON, nullable=True)  # list[str]
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    def __repr__(self) -> str:
+        return f"<IPOAnalystReport(symbol={self.ipo_symbol}, analyst={self.analyst_name}, score={self.score})>"
+
+
+class IPORecommendationModel(Base):
+    """The IPO CEO's final recommendation, aggregating whichever analyst
+    reports actually exist for this IPO at the time it was generated."""
+    __tablename__ = "ipo_recommendations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ipo_symbol = Column(String(50), nullable=False, index=True)
+    recommendation = Column(String(30), nullable=False)  # APPLY, AVOID, LISTING_GAIN_ONLY, LONG_TERM_INVESTMENT, WAIT
+    confidence = Column(Float, nullable=False)
+    reasoning = Column(String(2000), nullable=False)
+    analysts_used = Column(JSON, nullable=True)  # list[str] of analyst_name that contributed
+    data_completeness_pct = Column(Float, default=0.0)  # analysts_used / total analysts in the registry
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    def __repr__(self) -> str:
+        return f"<IPORecommendation(symbol={self.ipo_symbol}, rec={self.recommendation})>"
+
+
+class IPOPerformanceModel(Base):
+    """Post-listing comparison of what the CEO predicted vs what actually
+    happened — the feedback loop for future trust-scoring of analysts."""
+    __tablename__ = "ipo_performance"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ipo_symbol = Column(String(50), nullable=False, unique=True, index=True)
+    predicted_recommendation = Column(String(30), nullable=False)
+    predicted_confidence = Column(Float, nullable=False)
+    issue_price_high = Column(Float, nullable=True)
+    listing_price = Column(Float, nullable=True)
+    listing_gain_pct = Column(Float, nullable=True)
+    was_correct = Column(Boolean, nullable=True)  # null until judged
+    evaluated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<IPOPerformance(symbol={self.ipo_symbol}, gain={self.listing_gain_pct})>"

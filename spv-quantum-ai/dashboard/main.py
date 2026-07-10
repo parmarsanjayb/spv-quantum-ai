@@ -13,7 +13,7 @@ from core.bus import event_bus, EventModel
 from core.logging import get_logger
 from core.middleware import CorrelationIDMiddleware, RequestLoggingMiddleware, BasicAuthMiddleware, check_basic_auth_header
 from core.startup import validate_environment, run_startup_checks, cache_startup_results, get_cached_startup_results
-from database.connection import init_db, get_db_session
+from database.connection import init_db, get_db_session, async_session
 from database.models import OrderModel, TradeModel
 from agents.manager import AgentManager
 from brokers.manager import broker_manager
@@ -179,7 +179,13 @@ async def lifespan(app: FastAPI):
     from employees import employee_engine
     await employee_engine.start()
     app.state.employee_engine = employee_engine
-    
+
+    # 22. Start IPO Research Engine (fully independent module — real NSE
+    # data only, no coupling to the trading/strategy/backtest engines above)
+    from ipo.engine import ipo_engine
+    await ipo_engine.start()
+    app.state.ipo_engine = ipo_engine
+
     logger.info("Engine fully operational.")
 
     # Run startup readiness checks and cache results
@@ -190,6 +196,10 @@ async def lifespan(app: FastAPI):
     
     # Clean shutdown
     logger.info("Shutting down core engine...")
+    from ipo.engine import ipo_engine
+    await ipo_engine.stop()
+    from ipo.collector import ipo_collector
+    await ipo_collector.close()
     from employees import employee_engine
     await employee_engine.stop()
     from health import system_health_engine
@@ -1571,6 +1581,180 @@ async def get_system_metrics():
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# IPO ANALYSIS MODULE — fully independent of the trading/strategy/backtest
+# APIs above. Nothing here imports from those modules; nothing there imports
+# from ipo/*. Four groups per spec: Collector, Analysis, Dashboard, History.
+# ═══════════════════════════════════════════════════════════════════════════
+
+from ipo.engine import ipo_engine as _ipo_engine
+from ipo.collector import ipo_collector as _ipo_collector
+from ipo.ceo import ipo_ceo as _ipo_ceo
+from ipo.performance import ipo_performance_tracker as _ipo_perf
+from database.models import IPOIssueModel as _IPOIssueModel, IPOSubscriptionSnapshotModel as _IPOSubModel
+from sqlalchemy import select as _select
+
+def _ipo_issue_to_dict(issue: "_IPOIssueModel") -> Dict[str, Any]:
+    lot_size = issue.lot_size
+    min_investment = None
+    if lot_size and issue.price_band_high:
+        min_investment = round(lot_size * issue.price_band_high, 2)
+    return {
+        "symbol": issue.symbol,
+        "company_name": issue.company_name,
+        "status": issue.status,
+        "security_type": issue.security_type,
+        "price_band_low": issue.price_band_low,
+        "price_band_high": issue.price_band_high,
+        "lot_size": lot_size,
+        "min_investment": min_investment,
+        "issue_size": issue.issue_size,
+        "issue_start_date": issue.issue_start_date.isoformat() if issue.issue_start_date else None,
+        "issue_end_date": issue.issue_end_date.isoformat() if issue.issue_end_date else None,
+        "listing_date": issue.listing_date.isoformat() if issue.listing_date else None,
+        "listing_price": issue.listing_price,
+        "updated_at": issue.updated_at.isoformat() if issue.updated_at else None,
+    }
+
+# ── 1. Collector API ──────────────────────────────────────────────────────
+
+@app.post("/api/ipo/collector/refresh")
+async def ipo_collector_refresh():
+    """Triggers an immediate collection + recommendation-refresh cycle
+    against real NSE data, instead of waiting for the next scheduled run."""
+    result = await _ipo_engine.refresh_now()
+    return {"status": "SUCCESS", **result}
+
+@app.get("/api/ipo/collector/status")
+async def ipo_collector_status():
+    return {"last_collection_counts": _ipo_engine.last_collection_counts}
+
+# ── 2. Dashboard API ───────────────────────────────────────────────────────
+
+@app.get("/api/ipo/dashboard/upcoming")
+async def ipo_dashboard_upcoming():
+    async with async_session() as session:
+        rows = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.status == "UPCOMING").order_by(_IPOIssueModel.issue_start_date)
+        )).scalars().all()
+    return [_ipo_issue_to_dict(r) for r in rows]
+
+@app.get("/api/ipo/dashboard/open")
+async def ipo_dashboard_open():
+    async with async_session() as session:
+        rows = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.status == "OPEN").order_by(_IPOIssueModel.issue_end_date)
+        )).scalars().all()
+    return [_ipo_issue_to_dict(r) for r in rows]
+
+@app.get("/api/ipo/dashboard/closed")
+async def ipo_dashboard_closed():
+    async with async_session() as session:
+        rows = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.status == "CLOSED").order_by(_IPOIssueModel.issue_end_date.desc())
+        )).scalars().all()
+    return [_ipo_issue_to_dict(r) for r in rows]
+
+@app.get("/api/ipo/dashboard/listed")
+async def ipo_dashboard_listed(limit: int = 50):
+    async with async_session() as session:
+        rows = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.status == "LISTED")
+            .order_by(_IPOIssueModel.listing_date.desc()).limit(limit)
+        )).scalars().all()
+    return [_ipo_issue_to_dict(r) for r in rows]
+
+@app.get("/api/ipo/dashboard/search")
+async def ipo_dashboard_search(q: str):
+    async with async_session() as session:
+        rows = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.company_name.ilike(f"%{q}%"))
+        )).scalars().all()
+    return [_ipo_issue_to_dict(r) for r in rows]
+
+@app.get("/api/ipo/dashboard/{symbol}")
+async def ipo_dashboard_detail(symbol: str):
+    async with async_session() as session:
+        issue = (await session.execute(
+            _select(_IPOIssueModel).where(_IPOIssueModel.symbol == symbol.upper())
+        )).scalars().first()
+        if not issue:
+            raise HTTPException(status_code=404, detail=f"IPO '{symbol}' not found.")
+        subs = (await session.execute(
+            _select(_IPOSubModel).where(_IPOSubModel.ipo_symbol == symbol.upper())
+            .order_by(_IPOSubModel.snapshot_at)
+        )).scalars().all()
+    detail = _ipo_issue_to_dict(issue)
+    detail["subscription_timeline"] = [
+        {"category": s.category, "subscription_times": s.subscription_times, "snapshot_at": s.snapshot_at.isoformat()}
+        for s in subs
+    ]
+    return detail
+
+# ── 3. Analysis API ────────────────────────────────────────────────────────
+
+@app.post("/api/ipo/analysis/{symbol}")
+async def ipo_run_analysis(symbol: str):
+    """Runs (or re-runs) the IPO CEO + analyst pipeline for one symbol."""
+    try:
+        return await _ipo_ceo.analyze(symbol.upper())
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.get("/api/ipo/analysis/{symbol}")
+async def ipo_get_analysis(symbol: str):
+    """Returns the most recently stored recommendation + analyst reports,
+    without re-running analysis."""
+    from database.models import IPORecommendationModel, IPOAnalystReportModel
+    async with async_session() as session:
+        rec = (await session.execute(
+            _select(IPORecommendationModel).where(IPORecommendationModel.ipo_symbol == symbol.upper())
+        )).scalars().first()
+        reports = (await session.execute(
+            _select(IPOAnalystReportModel).where(IPOAnalystReportModel.ipo_symbol == symbol.upper())
+        )).scalars().all()
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"No analysis yet for '{symbol}'. POST to run one.")
+    return {
+        "symbol": symbol.upper(),
+        "recommendation": rec.recommendation,
+        "confidence": rec.confidence,
+        "reasoning": rec.reasoning,
+        "data_completeness_pct": rec.data_completeness_pct,
+        "reports": [
+            {"analyst_name": r.analyst_name, "score": r.score, "confidence": r.confidence,
+             "reason": r.reason, "advantages": r.advantages, "risks": r.risks}
+            for r in reports
+        ],
+    }
+
+# ── 4. History / Performance API ──────────────────────────────────────────
+
+@app.get("/api/ipo/history/{symbol}/performance")
+async def ipo_history_performance(symbol: str):
+    from database.models import IPOPerformanceModel
+    async with async_session() as session:
+        perf = (await session.execute(
+            _select(IPOPerformanceModel).where(IPOPerformanceModel.ipo_symbol == symbol.upper())
+        )).scalars().first()
+    if not perf:
+        raise HTTPException(status_code=404, detail=f"No performance data yet for '{symbol}' (not listed, or not yet evaluated).")
+    return {
+        "symbol": symbol.upper(),
+        "predicted_recommendation": perf.predicted_recommendation,
+        "predicted_confidence": perf.predicted_confidence,
+        "issue_price_high": perf.issue_price_high,
+        "listing_price": perf.listing_price,
+        "listing_gain_pct": perf.listing_gain_pct,
+        "was_correct": perf.was_correct,
+    }
+
+@app.get("/api/ipo/history/accuracy")
+async def ipo_history_accuracy():
+    """Aggregate real accuracy across every judged recommendation so far —
+    the raw feedback loop the spec's 'Performance Tracking' section asks
+    for. Not yet used to reweight analysts (Phase 2)."""
+    return await _ipo_perf.get_accuracy_summary()
 
 
 

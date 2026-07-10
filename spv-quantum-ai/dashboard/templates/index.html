@@ -28,6 +28,7 @@
             <button class="tab-btn" id="btn-tab-monitoring" onclick="switchTab('tab-monitoring')">AI Employee Monitor</button>
             <button class="tab-btn" id="btn-tab-decisions" onclick="switchTab('tab-decisions')">Decision Log</button>
             <button class="tab-btn" id="btn-tab-performance" onclick="switchTab('tab-performance')">Performance &amp; Charts</button>
+            <button class="tab-btn" id="btn-tab-ipo" onclick="switchTab('tab-ipo')" style="border-left: 1px solid var(--border-glass); margin-left: 0.4rem; padding-left: 1rem;">IPO Research</button>
             <button class="tab-btn" id="btn-tab-settings" onclick="switchTab('tab-settings')">System Settings</button>
         </nav>
         
@@ -712,6 +713,58 @@
                             <!-- Populated dynamically -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: IPO RESEARCH (independent module) -->
+        <div id="tab-ipo" class="tab-panel">
+            <div class="card-header-actions" style="margin-top: 1rem; margin-bottom: 1rem;">
+                <h2>IPO Research</h2>
+                <div style="display: flex; gap: 0.6rem; align-items: center;">
+                    <span id="ipo-accuracy-badge" class="badge" style="font-size: 0.75rem;">Accuracy: -</span>
+                    <button class="btn-action btn-xs" id="btn-ipo-refresh">Refresh Live Data</button>
+                </div>
+            </div>
+
+            <div class="log-filters" id="ipo-status-filters">
+                <button class="active" data-ipo-status="open">Open</button>
+                <button data-ipo-status="upcoming">Upcoming</button>
+                <button data-ipo-status="closed">Closed</button>
+                <button data-ipo-status="listed">Listed</button>
+            </div>
+
+            <div class="market-controls" style="margin: 0.8rem 0;">
+                <input type="text" id="ipo-search" placeholder="Search company name...">
+            </div>
+
+            <div class="terminal-layout-grid" style="grid-template-columns: 1fr 1.3fr;">
+                <!-- LIST -->
+                <div class="card">
+                    <div id="ipo-list" style="display: flex; flex-direction: column; gap: 0.6rem;"></div>
+                </div>
+
+                <!-- DETAIL -->
+                <div class="card" id="ipo-detail-card">
+                    <div id="ipo-detail-empty" style="color: var(--text-secondary); padding: 1rem 0;">
+                        Select an IPO on the left to see subscription data, AI analyst reports, and the CEO recommendation.
+                    </div>
+                    <div id="ipo-detail-content" style="display: none;">
+                        <div class="card-header-actions">
+                            <h3 id="ipo-detail-name">-</h3>
+                            <button class="btn-action btn-xs" id="btn-ipo-run-analysis">Run Analysis</button>
+                        </div>
+                        <div class="details-grid" id="ipo-detail-fields" style="margin-bottom: 1rem;"></div>
+
+                        <div id="ipo-recommendation-card" style="display: none; margin-bottom: 1rem; padding: 0.8rem; border-radius: 8px; border: 1px solid var(--border-glass);">
+                            <span id="ipo-rec-badge" class="badge" style="font-size: 1rem; padding: 0.4rem 0.9rem;">-</span>
+                            <p id="ipo-rec-reasoning" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.6rem;"></p>
+                            <p id="ipo-rec-completeness" style="font-size: 0.78rem; color: var(--text-secondary);"></p>
+                        </div>
+
+                        <h4 style="font-size: 0.9rem; margin-bottom: 0.5rem;">Analyst Reports</h4>
+                        <div id="ipo-analyst-reports"></div>
+                    </div>
                 </div>
             </div>
         </div>

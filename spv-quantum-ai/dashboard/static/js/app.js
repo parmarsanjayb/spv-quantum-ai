@@ -44,6 +44,10 @@ document.addEventListener("DOMContentLoaded", () => {
     let studioConditionRowSeq = 0;
     let backtestEquityChart = null;
 
+    // IPO Research state (fully independent of trading state above)
+    let activeIPOStatus = "open";
+    let activeIPOSymbol = null;
+
     window.switchTab = function(tabId) {
         document.querySelectorAll(".nav-tabs .tab-btn").forEach(btn => {
             if (btn.id === `btn-${tabId}`) {
@@ -81,6 +85,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (tabId === "tab-studio") {
             loadStudioStrategyList();
+        }
+        if (tabId === "tab-ipo") {
+            loadIPOList(activeIPOStatus);
+            loadIPOAccuracy();
         }
     };
 
@@ -272,6 +280,23 @@ document.addEventListener("DOMContentLoaded", () => {
             if (openName) openStudioEdit(openName);
             if (cloneName) cloneStudioStrategy(cloneName);
             if (deleteName) deleteStudioStrategy(deleteName);
+        });
+
+        // IPO Research
+        document.getElementById("btn-ipo-refresh").addEventListener("click", refreshIPOData);
+        document.getElementById("btn-ipo-run-analysis").addEventListener("click", runIPOAnalysis);
+        document.getElementById("ipo-status-filters").addEventListener("click", (e) => {
+            if (e.target.tagName !== "BUTTON") return;
+            document.querySelectorAll("#ipo-status-filters button").forEach(b => b.classList.remove("active"));
+            e.target.classList.add("active");
+            activeIPOStatus = e.target.getAttribute("data-ipo-status");
+            document.getElementById("ipo-search").value = "";
+            loadIPOList(activeIPOStatus);
+        });
+        let ipoSearchTimeout;
+        document.getElementById("ipo-search").addEventListener("input", (e) => {
+            clearTimeout(ipoSearchTimeout);
+            ipoSearchTimeout = setTimeout(() => searchIPOs(e.target.value.trim()), 300);
         });
     }
 
@@ -1148,6 +1173,193 @@ document.addEventListener("DOMContentLoaded", () => {
             await loadStudioStrategyList();
         } catch (e) {
             console.error("Failed to delete strategy", e);
+        }
+    }
+
+    // ── IPO Research (independent module) ───────────────────────────────────
+
+    async function loadIPOList(status) {
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/dashboard/${status}`);
+            const issues = await res.json();
+            renderIPOList(issues);
+        } catch (e) {
+            console.error("Failed to load IPO list", e);
+        }
+    }
+
+    async function searchIPOs(query) {
+        if (!query) {
+            loadIPOList(activeIPOStatus);
+            return;
+        }
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/dashboard/search?q=${encodeURIComponent(query)}`);
+            renderIPOList(await res.json());
+        } catch (e) {
+            console.error("Failed to search IPOs", e);
+        }
+    }
+
+    function renderIPOList(issues) {
+        const list = document.getElementById("ipo-list");
+        if (!issues || issues.length === 0) {
+            list.innerHTML = `<p style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem 0;">No IPOs in this category right now.</p>`;
+            return;
+        }
+        list.innerHTML = "";
+        issues.forEach(issue => {
+            const card = document.createElement("div");
+            card.className = "ipo-list-card";
+            card.style.cssText = "padding: 0.7rem; border: 1px solid var(--border-glass); border-radius: 8px; cursor: pointer;" +
+                (issue.symbol === activeIPOSymbol ? " background: rgba(0,242,254,0.08); border-color: var(--accent-blue);" : "");
+            const band = (issue.price_band_low != null && issue.price_band_high != null)
+                ? `₹${issue.price_band_low}–₹${issue.price_band_high}` : "-";
+            const lot = issue.lot_size != null ? issue.lot_size : "-";
+            card.innerHTML = `
+                <div style="display:flex; justify-content:space-between;">
+                    <strong style="font-size: 0.9rem;">${issue.company_name}</strong>
+                    <span class="badge" style="font-size: 0.7rem;">${issue.security_type || ''}</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 0.3rem;">
+                    ${issue.symbol} &nbsp;|&nbsp; Band: ${band} &nbsp;|&nbsp; Lot: ${lot}
+                </div>
+            `;
+            card.addEventListener("click", () => selectIPO(issue.symbol));
+            list.appendChild(card);
+        });
+    }
+
+    async function selectIPO(symbol) {
+        activeIPOSymbol = symbol;
+        loadIPOList(activeIPOStatus); // re-render to highlight selection
+        document.getElementById("ipo-detail-empty").style.display = "none";
+        document.getElementById("ipo-detail-content").style.display = "block";
+        document.getElementById("ipo-recommendation-card").style.display = "none";
+        document.getElementById("ipo-analyst-reports").innerHTML = "";
+
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/dashboard/${symbol}`);
+            const issue = await res.json();
+            renderIPODetailFields(issue);
+        } catch (e) {
+            console.error("Failed to load IPO detail", e);
+        }
+
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/analysis/${symbol}`);
+            if (res.ok) {
+                renderIPOAnalysis(await res.json());
+            }
+        } catch (e) {
+            // No analysis yet — fine, user can click Run Analysis.
+        }
+    }
+
+    function renderIPODetailFields(issue) {
+        document.getElementById("ipo-detail-name").textContent = `${issue.company_name} (${issue.symbol})`;
+        const band = (issue.price_band_low != null && issue.price_band_high != null)
+            ? `₹${issue.price_band_low} – ₹${issue.price_band_high}` : "Not available";
+        const fields = [
+            ["Status", issue.status],
+            ["Security Type", issue.security_type || "-"],
+            ["Price Band", band],
+            ["Lot Size", issue.lot_size != null ? issue.lot_size : "Not available"],
+            ["Min Investment", issue.min_investment != null ? `₹${issue.min_investment.toLocaleString()}` : "Not available"],
+            ["Issue Size (shares)", issue.issue_size != null ? issue.issue_size.toLocaleString() : "-"],
+            ["Open Date", issue.issue_start_date ? new Date(issue.issue_start_date).toLocaleDateString() : "-"],
+            ["Close Date", issue.issue_end_date ? new Date(issue.issue_end_date).toLocaleDateString() : "-"],
+            ["Listing Date", issue.listing_date ? new Date(issue.listing_date).toLocaleDateString() : "-"],
+            ["Listing Price", issue.listing_price != null ? `₹${issue.listing_price}` : "-"],
+        ];
+        document.getElementById("ipo-detail-fields").innerHTML = fields.map(([label, value]) =>
+            `<div><strong>${label}:</strong> ${value}</div>`
+        ).join("");
+
+        if (issue.subscription_timeline && issue.subscription_timeline.length > 0) {
+            const latest = issue.subscription_timeline[issue.subscription_timeline.length - 1];
+            document.getElementById("ipo-detail-fields").innerHTML +=
+                `<div><strong>Latest Subscription:</strong> ${latest.subscription_times.toFixed(2)}x (${latest.category})</div>`;
+        }
+    }
+
+    async function runIPOAnalysis() {
+        if (!activeIPOSymbol) return;
+        const btn = document.getElementById("btn-ipo-run-analysis");
+        btn.disabled = true;
+        btn.textContent = "Analyzing...";
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/analysis/${activeIPOSymbol}`, { method: "POST" });
+            const result = await res.json();
+            renderIPOAnalysis(result);
+        } catch (e) {
+            console.error("Failed to run IPO analysis", e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Run Analysis";
+        }
+    }
+
+    function renderIPOAnalysis(result) {
+        const recCard = document.getElementById("ipo-recommendation-card");
+        recCard.style.display = "block";
+        const badge = document.getElementById("ipo-rec-badge");
+        badge.textContent = (result.recommendation || "").replace(/_/g, " ");
+        const colorClass = ["APPLY", "LISTING_GAIN_ONLY"].includes(result.recommendation) ? "text-green"
+            : result.recommendation === "AVOID" ? "text-red" : "text-orange";
+        badge.className = `badge ${colorClass}`;
+        document.getElementById("ipo-rec-reasoning").textContent = result.reasoning || "";
+        const completeness = result.data_completeness_pct;
+        document.getElementById("ipo-rec-completeness").textContent =
+            completeness != null ? `Data completeness: ${completeness}% of available analysts had real data for this IPO.` : "";
+
+        const reports = result.reports || [];
+        const container = document.getElementById("ipo-analyst-reports");
+        if (reports.length === 0) {
+            container.innerHTML = `<p style="color: var(--text-secondary); font-size: 0.85rem;">No analyst reports yet — click Run Analysis.</p>`;
+            return;
+        }
+        container.innerHTML = reports.map(r => `
+            <div style="border: 1px solid var(--border-glass); border-radius: 8px; padding: 0.7rem; margin-bottom: 0.6rem;">
+                <div style="display:flex; justify-content:space-between;">
+                    <strong style="font-size: 0.88rem;">${r.analyst_name}</strong>
+                    <span>Score: <b>${r.score.toFixed(0)}</b>/100 &nbsp; Confidence: ${r.confidence.toFixed(0)}%</span>
+                </div>
+                <p style="font-size: 0.82rem; color: var(--text-secondary); margin: 0.4rem 0;">${r.reason}</p>
+                ${r.advantages && r.advantages.length ? `<div class="text-green" style="font-size: 0.78rem;">+ ${r.advantages.join(" · ")}</div>` : ""}
+                ${r.risks && r.risks.length ? `<div class="text-red" style="font-size: 0.78rem;">- ${r.risks.join(" · ")}</div>` : ""}
+            </div>
+        `).join("");
+    }
+
+    async function loadIPOAccuracy() {
+        try {
+            const res = await fetch(`${apiBase}/api/ipo/history/accuracy`);
+            const summary = await res.json();
+            const badge = document.getElementById("ipo-accuracy-badge");
+            if (summary.total_judged === 0) {
+                badge.textContent = "Accuracy: not enough listed IPOs judged yet";
+            } else {
+                badge.textContent = `Accuracy: ${summary.accuracy_pct}% (${summary.total_judged} judged)`;
+            }
+        } catch (e) {
+            console.error("Failed to load IPO accuracy", e);
+        }
+    }
+
+    async function refreshIPOData() {
+        const btn = document.getElementById("btn-ipo-refresh");
+        btn.disabled = true;
+        btn.textContent = "Refreshing...";
+        try {
+            await fetch(`${apiBase}/api/ipo/collector/refresh`, { method: "POST" });
+            await loadIPOList(activeIPOStatus);
+            await loadIPOAccuracy();
+        } catch (e) {
+            console.error("Failed to refresh IPO data", e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Refresh Live Data";
         }
     }
 
