@@ -26,6 +26,7 @@ class BacktestingEngine:
         self.publisher = BacktestPublisher()
         
         self.progress = BacktestProgress(backtest_id="", status="PENDING")
+        self.last_result: Dict[str, Any] = {}
         self._running = False
         self._current_task: Optional[asyncio.Task] = None
 
@@ -112,7 +113,18 @@ class BacktestingEngine:
             if total_count == 0:
                 self.progress.status = "COMPLETED"
                 self.progress.progress_pct = 100.0
-                await self.publisher.publish_completed(backtest_id, self.progress, {"message": "No data found"})
+                no_data_metrics = {"message": "No data found"}
+                self.last_result = {
+                    "backtest_id": backtest_id,
+                    "metrics": no_data_metrics,
+                    "verdict": {
+                        "label": "NO_DATA",
+                        "headline": "No real historical data available",
+                        "detail": "No recorded candles exist yet for the selected symbol/timeframe/date range — "
+                                  "the platform only backtests against real data it has actually collected.",
+                    },
+                }
+                await self.publisher.publish_completed(backtest_id, self.progress, no_data_metrics)
                 return
 
             # 3. Sequential replay loop
@@ -178,7 +190,13 @@ class BacktestingEngine:
                 "sharpe_ratio": risk_metrics["sharpe_ratio"],
                 "drawdown_pct": risk_metrics["drawdown_pct"],
             }
-            
+
+            self.last_result = {
+                "backtest_id": backtest_id,
+                "metrics": metrics,
+                "verdict": self._compute_verdict(metrics),
+            }
+
             await self.publisher.publish_completed(backtest_id, self.progress, metrics)
             logger.info(f"Backtest {backtest_id} complete. Trades: {metrics['total_trades']}, PNL: {metrics['net_profit_loss']}")
 
@@ -230,6 +248,47 @@ class BacktestingEngine:
                 sharpe = (mean_r / std_r) * math.sqrt(252)
 
         return {"sharpe_ratio": round(sharpe, 2), "drawdown_pct": round(max_dd_pct, 2)}
+
+    @staticmethod
+    def _compute_verdict(metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Plain-language profitable/not-profitable verdict for a non-technical
+        user, derived from the real metrics above — never a guess.
+        """
+        total_trades = metrics["total_trades"]
+        net_pnl = metrics["net_profit_loss"]
+        win_rate = metrics["win_rate_pct"]
+        drawdown = metrics["drawdown_pct"]
+
+        if total_trades == 0:
+            return {
+                "label": "NO_DATA",
+                "headline": "Not enough trades to judge",
+                "detail": "This backtest produced zero completed trades in the selected range — "
+                          "there isn't enough history yet to say whether the strategy is profitable.",
+            }
+
+        low_sample = total_trades < 10
+        sample_note = (
+            f" (only {total_trades} trades — treat this as a rough signal, not a reliable verdict)"
+            if low_sample else f" (based on {total_trades} trades)"
+        )
+
+        if net_pnl > 0:
+            label = "PROFITABLE"
+            headline = f"Profitable{sample_note}"
+        elif net_pnl == 0:
+            label = "BREAK_EVEN"
+            headline = f"Broke even{sample_note}"
+        else:
+            label = "NOT_PROFITABLE"
+            headline = f"Not profitable{sample_note}"
+
+        detail = (
+            f"Net P&L: {net_pnl:.2f} | Win rate: {win_rate:.1f}% | "
+            f"Max drawdown: {drawdown:.1f}% | Sharpe: {metrics['sharpe_ratio']:.2f}"
+        )
+        return {"label": label, "headline": headline, "detail": detail}
 
     async def get_dashboard_status(self) -> Dict[str, Any]:
         """Returns backtest progress and status metrics."""

@@ -103,6 +103,20 @@ class DecisionPublisher:
             source_agent="chief_decision_agent",
             payload=payload
         ))
+
+        # MANUAL mode: hold the order for the user to confirm/reject instead
+        # of executing it immediately. Defaults to AUTO, which is the
+        # existing behavior below, unchanged.
+        from trading.mode import trading_mode_manager
+        if trading_mode_manager.get_mode() == "MANUAL":
+            trading_mode_manager.hold_for_confirmation(payload)
+            await event_bus.publish(EventModel(
+                event_type="trade_pending_confirmation",
+                source_agent="chief_decision_agent",
+                payload=payload
+            ))
+            return
+
         # Route through the Risk Agent for final order-level validation before execution
         await event_bus.publish(EventModel(
             event_type="order_request",
@@ -113,6 +127,22 @@ class DecisionPublisher:
                 "quantity": payload.get("quantity", 10.0),
                 # Real LTP, resolved in analyze() above — APPROVED never reaches
                 # here without one (see the NO_LIVE_PRICE guard).
+                "price": payload.get("price", 0.0),
+                "type": "LIMIT",
+                "strategy_name": payload.get("strategy_name")
+            }
+        ))
+
+    async def publish_confirmed_order(self, payload: Dict[str, Any]) -> None:
+        """Publishes the order_request for a MANUAL-mode decision the user
+        has explicitly confirmed. Same order shape as the AUTO path above."""
+        await event_bus.publish(EventModel(
+            event_type="order_request",
+            source_agent="chief_decision_agent",
+            payload={
+                "symbol": payload["symbol"],
+                "side": payload.get("side", "BUY"),
+                "quantity": payload.get("quantity", 10.0),
                 "price": payload.get("price", 0.0),
                 "type": "LIMIT",
                 "strategy_name": payload.get("strategy_name")

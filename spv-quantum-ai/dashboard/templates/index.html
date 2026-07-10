@@ -21,7 +21,9 @@
         </div>
         
         <nav class="nav-tabs">
-            <button class="tab-btn active" id="btn-tab-terminal" onclick="switchTab('tab-terminal')">Trading Terminal</button>
+            <button class="tab-btn active" id="btn-tab-terminal" onclick="switchTab('tab-terminal')">Trade</button>
+            <button class="tab-btn" id="btn-tab-strategy" onclick="switchTab('tab-strategy')">Strategy Setup</button>
+            <button class="tab-btn" id="btn-tab-backtest" onclick="switchTab('tab-backtest')">Backtest</button>
             <button class="tab-btn" id="btn-tab-monitoring" onclick="switchTab('tab-monitoring')">AI Employee Monitor</button>
             <button class="tab-btn" id="btn-tab-decisions" onclick="switchTab('tab-decisions')">Decision Log</button>
             <button class="tab-btn" id="btn-tab-performance" onclick="switchTab('tab-performance')">Performance &amp; Charts</button>
@@ -103,21 +105,54 @@
 
         <!-- TAB 1: TERMINAL -->
         <div id="tab-terminal" class="tab-panel active">
+
+            <!-- MY ACTIVE SYMBOL -->
+            <div class="card" id="my-symbol-card">
+                <div class="card-header-actions">
+                    <h2>My Symbol</h2>
+                    <span id="my-symbol-mode-badge" class="badge">-</span>
+                </div>
+                <div id="my-symbol-empty" style="padding: 1rem 0.25rem; color: var(--text-secondary); font-size: 0.9rem;">
+                    No symbol selected yet — pick one in the <a href="#" onclick="switchTab('tab-strategy'); return false;">Strategy Setup</a> tab.
+                </div>
+                <div id="my-symbol-content" style="display: none;">
+                    <div class="details-grid" style="font-size: 1.05rem;">
+                        <div><strong id="my-symbol-name">-</strong></div>
+                        <div>LTP: <span id="my-symbol-ltp" class="value">-</span></div>
+                        <div>Change: <span id="my-symbol-change" class="value">-</span></div>
+                        <div>Position: <span id="my-symbol-position">No open position</span></div>
+                    </div>
+                    <div class="manual-trade-actions" id="manual-trade-actions" style="display: none; gap: 0.6rem; margin-top: 0.8rem;">
+                        <button class="btn-success" id="btn-manual-buy">BUY</button>
+                        <button class="btn-danger" id="btn-manual-sell">SELL</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PENDING CONFIRMATIONS (Manual mode only) -->
+            <div class="card" id="pending-confirmations-card" style="display: none;">
+                <h2>Pending Confirmation</h2>
+                <div id="pending-confirmations-list"></div>
+            </div>
+
             <!-- MAIN LAYOUT GRID -->
             <div class="terminal-layout-grid">
-            
+
             <!-- COLUMN 1: Live Market & AI Employee Identity -->
             <div class="grid-col flex-col">
                 <!-- LIVE MARKET PANEL -->
                 <div class="card flex-grow-1">
                     <div class="card-header-actions">
                         <h2>Live Market Monitor</h2>
-                        <span id="feed-status-badge" class="feed-status-badge feed-disconnected">Feed Disconnected</span>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <span id="feed-status-badge" class="feed-status-badge feed-disconnected">Feed Disconnected</span>
+                            <button class="btn-action" id="btn-toggle-market-panel" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">Show Full Market</button>
+                        </div>
                     </div>
                     <div class="market-controls">
                         <input type="text" id="market-search" placeholder="Search symbol...">
                     </div>
-                    <div class="market-groups" id="market-groups">
+                    <div class="market-groups" id="market-groups" style="display: none;">
                         <div class="feed-disconnected-overlay" id="feed-disconnected-overlay">
                             Waiting for live market feed...
                         </div>
@@ -370,11 +405,100 @@
         </div>
         </div>
 
+        <!-- TAB: STRATEGY SETUP -->
+        <div id="tab-strategy" class="tab-panel">
+            <div class="card" style="margin-top: 1rem; max-width: 700px; margin-left: auto; margin-right: auto;">
+                <div class="card-header-actions">
+                    <h2>Strategy Setup</h2>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label for="strategy-symbol-select" style="font-weight: 600; font-size: 0.9rem; color: var(--accent-blue);">Symbol to Trade</label>
+                    <select id="strategy-symbol-select" style="width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.4); color: var(--text-primary); font-size: 0.9rem; margin-top: 0.4rem;">
+                        <option value="">-- Select Symbol --</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label style="font-weight: 600; font-size: 0.9rem; color: var(--accent-blue);">Trade Mode</label>
+                    <div style="display: flex; gap: 0.6rem; margin-top: 0.5rem;">
+                        <button class="btn-action mode-toggle-btn" id="btn-mode-auto" data-mode="AUTO">Auto (AI trades automatically)</button>
+                        <button class="btn-action mode-toggle-btn" id="btn-mode-manual" data-mode="MANUAL">Manual (I confirm every trade)</button>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="font-weight: 600; font-size: 0.9rem; color: var(--accent-orange);">Broker</label>
+                    <div style="display: flex; gap: 0.6rem; margin-top: 0.5rem;">
+                        <button class="btn-action broker-toggle-btn" id="btn-broker-paper" data-broker="paper_broker">Paper Trade (Simulation)</button>
+                        <button class="btn-action broker-toggle-btn" id="btn-broker-real" data-broker="kotak_neo">Real Money (Kotak Neo)</button>
+                    </div>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.5rem;">Switches instantly — no restart needed.</p>
+                </div>
+
+                <div id="strategy-setup-status" style="font-size: 0.85rem; font-weight: 500; margin-top: 0.5rem;"></div>
+            </div>
+
+            <div class="card" style="margin-top: 1.2rem; max-width: 700px; margin-left: auto; margin-right: auto;">
+                <div class="card-header-actions">
+                    <h2>Active Strategy</h2>
+                </div>
+                <div id="active-strategy-details" class="details-grid">
+                    <div>Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: BACKTEST -->
+        <div id="tab-backtest" class="tab-panel">
+            <div class="card" style="margin-top: 1rem; max-width: 700px; margin-left: auto; margin-right: auto;">
+                <div class="card-header-actions">
+                    <h2>Backtest Strategy</h2>
+                </div>
+                <form id="backtest-form" style="display: flex; flex-direction: column; gap: 1rem;">
+                    <div class="form-group">
+                        <label for="backtest-symbol">Symbol</label>
+                        <select id="backtest-symbol" style="width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.4); color: var(--text-primary);">
+                            <option value="">-- Select Symbol --</option>
+                        </select>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <div class="form-group">
+                            <label for="backtest-start-date">From</label>
+                            <input type="date" id="backtest-start-date" style="width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                        </div>
+                        <div class="form-group">
+                            <label for="backtest-end-date">To</label>
+                            <input type="date" id="backtest-end-date" style="width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-action" style="background: var(--gradient-blue); color: #000; font-weight: 600;">Run Backtest</button>
+                </form>
+                <div id="backtest-progress" style="margin-top: 1rem; display: none;">
+                    <div class="prog-bar"><div class="prog-bar-fill" id="backtest-progress-fill" style="width: 0%"></div></div>
+                    <p id="backtest-progress-text" style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.4rem;"></p>
+                </div>
+            </div>
+
+            <div class="card" id="backtest-result-card" style="margin-top: 1.2rem; max-width: 700px; margin-left: auto; margin-right: auto; display: none;">
+                <div class="card-header-actions">
+                    <h2>Result</h2>
+                </div>
+                <div id="backtest-verdict-badge" class="badge" style="font-size: 1.1rem; padding: 0.5rem 1rem; display: inline-block; margin-bottom: 1rem;">-</div>
+                <p id="backtest-verdict-detail" style="font-size: 0.9rem; color: var(--text-secondary);"></p>
+            </div>
+        </div>
+
         <!-- TAB 2: AI EMPLOYEE MONITOR -->
         <div id="tab-monitoring" class="tab-panel">
             <div class="card-header-actions" style="margin-top: 1rem; margin-bottom: 1rem;">
                 <h2>AI Employee Monitoring Terminal</h2>
-                <span class="badge text-green">Auto-Monitoring Heartbeats: Active</span>
+                <div style="display: flex; gap: 0.8rem; align-items: center;">
+                    <label style="font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.4rem;">
+                        <input type="checkbox" id="chk-relevant-only" checked> Show relevant employees only
+                    </label>
+                    <span class="badge text-green">Auto-Monitoring Heartbeats: Active</span>
+                </div>
             </div>
             
             <div class="monitoring-grid" id="monitor-cards-container">

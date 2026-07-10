@@ -643,8 +643,30 @@ button {
 .btn-warning { background: var(--accent-orange); color: #06070a; }
 .btn-success { background: var(--accent-green); color: #06070a; }
 .btn-action { background: rgba(0, 242, 254, 0.15); color: var(--accent-blue); border: 1px solid var(--border-glass); }
+.btn-xs { padding: 0.3rem 0.6rem; font-size: 0.78rem; }
 
 button:hover { opacity: 0.9; }
+
+/* Simplified trading controls (Strategy Setup tab) */
+.mode-toggle-btn, .broker-toggle-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-glass);
+}
+.mode-toggle-btn.active-toggle {
+    background: rgba(0, 242, 254, 0.15);
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+    font-weight: 600;
+}
+.broker-toggle-btn.active-toggle {
+    background: rgba(0, 245, 160, 0.15);
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    font-weight: 600;
+}
+.text-orange { color: var(--accent-orange) !important; }
 button:active { transform: scale(0.97); }
 
 /* TELEMETRY PROGRESS BARS */

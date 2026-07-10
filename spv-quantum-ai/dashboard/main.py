@@ -886,6 +886,119 @@ async def stop_backtest():
     await _bte.stop()
     return {"status": "SUCCESS", "message": "Backtest cancelled successfully."}
 
+@app.get("/api/backtest/result")
+async def get_backtest_result():
+    """Returns the last completed backtest's metrics and a plain-language
+    profitable/not-profitable verdict."""
+    return _bte.last_result or {"backtest_id": None, "metrics": {}, "verdict": None}
+
+# ── Simplified Trading Controls (mode, active symbol, broker, pending confirmations) ──
+
+class TradingModeUpdate(BaseModel):
+    mode: str  # AUTO or MANUAL
+
+@app.get("/api/trading/mode")
+async def get_trading_mode():
+    from trading.mode import trading_mode_manager
+    return {"mode": trading_mode_manager.get_mode()}
+
+@app.post("/api/trading/mode")
+async def set_trading_mode(payload: TradingModeUpdate):
+    from trading.mode import trading_mode_manager
+    try:
+        trading_mode_manager.set_mode(payload.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "SUCCESS", "mode": trading_mode_manager.get_mode()}
+
+@app.get("/api/trading/pending")
+async def get_pending_trades():
+    """Decisions APPROVED while in MANUAL mode, awaiting user confirmation."""
+    from trading.mode import trading_mode_manager
+    return trading_mode_manager.get_pending()
+
+@app.post("/api/trading/confirm/{decision_id}")
+async def confirm_pending_trade(decision_id: str):
+    from trading.mode import trading_mode_manager
+    from agents.chief_decision_agent import DecisionPublisher
+    record = trading_mode_manager.pop_pending(decision_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="No pending decision with that id.")
+    await DecisionPublisher().publish_confirmed_order(record)
+    return {"status": "SUCCESS", "message": f"Order confirmed for {record.get('symbol')}."}
+
+@app.post("/api/trading/reject/{decision_id}")
+async def reject_pending_trade(decision_id: str):
+    from trading.mode import trading_mode_manager
+    record = trading_mode_manager.pop_pending(decision_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="No pending decision with that id.")
+    return {"status": "SUCCESS", "message": f"Order rejected for {record.get('symbol')}."}
+
+
+class ActiveSymbolUpdate(BaseModel):
+    symbol: str
+
+@app.get("/api/trading/active-symbol")
+async def get_active_symbol():
+    from trading.context import trading_context_manager
+    return {"symbol": trading_context_manager.get_active_symbol()}
+
+@app.post("/api/trading/active-symbol")
+async def set_active_symbol(payload: ActiveSymbolUpdate):
+    from trading.context import trading_context_manager
+    trading_context_manager.set_active_symbol(payload.symbol)
+    return {"status": "SUCCESS", "symbol": trading_context_manager.get_active_symbol()}
+
+
+class BrokerSwitchRequest(BaseModel):
+    broker: str  # paper_broker or kotak_neo
+
+@app.get("/api/trading/broker")
+async def get_active_broker_mode():
+    from brokers.manager import broker_manager
+    return {"broker": broker_manager.get_active().name}
+
+@app.post("/api/trading/broker")
+async def switch_active_broker(payload: BrokerSwitchRequest):
+    """Hot-switches the live broker (paper vs real) — takes effect
+    immediately, unlike the generic /api/settings form which only persists
+    config for the next restart."""
+    from brokers.manager import broker_manager
+    from core.config import settings
+    if payload.broker not in ["paper_broker", "kotak_neo"]:
+        raise HTTPException(status_code=400, detail="Invalid broker choice.")
+    await broker_manager.switch_broker(payload.broker)
+    settings.yaml_config.setdefault("brokers", {})["active"] = payload.broker
+    settings.save_yaml_config()
+    return {"status": "SUCCESS", "broker": payload.broker}
+
+
+@app.get("/api/employees/relevant")
+async def get_relevant_employees():
+    """Returns only the employees actually relevant to the active strategy
+    and active symbol's segment, instead of all 30."""
+    from strategies.engine import strategy_engine
+    from trading.context import trading_context_manager
+    from market.manager import market_data_manager
+    from employees.relevance import get_relevant_employee_codes
+
+    active_strategies = strategy_engine.registry.get_active()
+    if not active_strategies:
+        return {"relevant_codes": [], "employees": []}
+    strategy = active_strategies[0]
+
+    symbol = trading_context_manager.get_active_symbol()
+    meta = market_data_manager.registry.get_meta(symbol) if symbol else None
+    segment = (meta or {}).get("segment", "EQUITY")
+
+    relevant_codes = get_relevant_employee_codes(strategy, segment=segment)
+
+    from employees.engine import employee_engine
+    all_profiles = employee_engine.manager.profiles
+    employees = [p.model_dump() for code, p in all_profiles.items() if code in relevant_codes]
+    return {"strategy_name": strategy.name, "segment": segment, "relevant_codes": relevant_codes, "employees": employees}
+
 # ── Market Replay Engine API Endpoints ────────────────────────────────────────
 from replay.engine import replay_engine as _rpe
 from replay.models import ReplayConfig as _ReplayConfig

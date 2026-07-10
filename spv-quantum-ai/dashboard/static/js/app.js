@@ -30,6 +30,13 @@ document.addEventListener("DOMContentLoaded", () => {
     let accuracyChart = null;
     let ws;
 
+    // Simplified trading controls state
+    let lastEmployeeList = [];
+    let activeSymbol = null;
+    let latestOpenPositions = [];
+    let pendingConfirmationsInterval;
+    let backtestPollInterval;
+
     window.switchTab = function(tabId) {
         document.querySelectorAll(".nav-tabs .tab-btn").forEach(btn => {
             if (btn.id === `btn-${tabId}`) {
@@ -57,6 +64,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (tabId === "tab-settings") {
             fetchSystemSettings();
+        }
+        if (tabId === "tab-strategy") {
+            loadStrategySetup();
+        }
+        if (tabId === "tab-backtest") {
+            loadBacktestResult();
         }
     };
 
@@ -194,6 +207,88 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
         });
+
+        // Show/hide the full multi-panel market overview (defaults collapsed
+        // so a new user just sees their selected symbol, not everything).
+        document.getElementById("btn-toggle-market-panel").addEventListener("click", (e) => {
+            const panel = document.getElementById("market-groups");
+            const collapsed = panel.style.display === "none";
+            panel.style.display = collapsed ? "block" : "none";
+            e.target.textContent = collapsed ? "Hide Full Market" : "Show Full Market";
+        });
+
+        // Strategy Setup: symbol picker
+        document.getElementById("strategy-symbol-select").addEventListener("change", (e) => {
+            if (e.target.value) setActiveSymbol(e.target.value);
+        });
+
+        // Strategy Setup: manual/auto mode toggle
+        document.getElementById("btn-mode-auto").addEventListener("click", () => setTradingMode("AUTO"));
+        document.getElementById("btn-mode-manual").addEventListener("click", () => setTradingMode("MANUAL"));
+
+        // Strategy Setup: broker toggle
+        document.getElementById("btn-broker-paper").addEventListener("click", () => setActiveBroker("paper_broker"));
+        document.getElementById("btn-broker-real").addEventListener("click", () => setActiveBroker("kotak_neo"));
+
+        // Backtest form
+        document.getElementById("backtest-form").addEventListener("submit", runBacktestFromForm);
+
+        // Pending confirmation buttons (delegated — rows are re-rendered often)
+        document.getElementById("pending-confirmations-list").addEventListener("click", (e) => {
+            const confirmId = e.target.getAttribute("data-confirm");
+            const rejectId = e.target.getAttribute("data-reject");
+            if (confirmId) respondToPendingTrade(confirmId, "confirm");
+            if (rejectId) respondToPendingTrade(rejectId, "reject");
+        });
+
+        // Manual Buy/Sell on the active symbol
+        document.getElementById("btn-manual-buy").addEventListener("click", () => submitManualOrder("BUY"));
+        document.getElementById("btn-manual-sell").addEventListener("click", () => submitManualOrder("SELL"));
+
+        // Employee Monitor: relevant-only filter
+        document.getElementById("chk-relevant-only").addEventListener("change", applyEmployeeRelevanceFilter);
+    }
+
+    async function submitManualOrder(side) {
+        if (!activeSymbol) {
+            alert("Select a symbol in Strategy Setup first.");
+            return;
+        }
+        const qtyStr = prompt(`Quantity to ${side} for ${activeSymbol}?`, "1");
+        if (!qtyStr) return;
+        const quantity = parseFloat(qtyStr);
+        if (!quantity || quantity <= 0) {
+            alert("Enter a valid quantity.");
+            return;
+        }
+        try {
+            const res = await fetch(`${apiBase}/api/execution/submit`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ symbol: activeSymbol, side, quantity, type: "MARKET" })
+            });
+            await res.json();
+            appendTerminalLog("dashboard_client", "manual_order", `Manual ${side} submitted for ${activeSymbol} x${quantity}.`);
+            await refreshTables();
+        } catch (e) {
+            console.error("Failed to submit manual order", e);
+        }
+    }
+
+    async function applyEmployeeRelevanceFilter() {
+        const relevantOnly = document.getElementById("chk-relevant-only").checked;
+        if (!relevantOnly) {
+            renderMonitoringPage(lastEmployeeList);
+            return;
+        }
+        try {
+            const res = await fetch(`${apiBase}/api/employees/relevant`);
+            const data = await res.json();
+            renderMonitoringPage(data.employees && data.employees.length ? data.employees : lastEmployeeList);
+        } catch (e) {
+            console.error("Failed to fetch relevant employees", e);
+            renderMonitoringPage(lastEmployeeList);
+        }
     }
 
     async function triggerEmergencyAction(action) {
@@ -261,13 +356,17 @@ document.addEventListener("DOMContentLoaded", () => {
             refreshTables(),
             fetchSystemSettings(),
             fetchDecisionHistory(),
-            fetchSystemAnalytics()
+            fetchSystemAnalytics(),
+            populateSymbolPickers(),
+            loadActiveSymbol(),
+            loadTradingMode()
         ]);
 
         // Start loops
         portfolioInterval = setInterval(() => {
             refreshTables();
             fetchSystemAnalytics();
+            updateMySymbolCard();
         }, 3000);
         telemetryInterval = setInterval(() => {
             fetchTelemetryData();
@@ -276,6 +375,304 @@ document.addEventListener("DOMContentLoaded", () => {
             fetchTrendIntelData();
         }, 3000);
         setInterval(fetchFeedStatus, 5000);
+        pendingConfirmationsInterval = setInterval(fetchPendingConfirmations, 4000);
+        fetchPendingConfirmations();
+    }
+
+    // ── Simplified Trading Controls: symbol picker, mode, broker ──────────────
+
+    async function populateSymbolPickers() {
+        try {
+            const res = await fetch(`${apiBase}/api/market/symbols`);
+            const data = await res.json();
+            const symbols = (data.symbols || []).slice().sort();
+            ["strategy-symbol-select", "backtest-symbol"].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                const current = sel.value;
+                sel.innerHTML = `<option value="">-- Select Symbol --</option>`;
+                symbols.forEach(sym => {
+                    const opt = document.createElement("option");
+                    opt.value = sym;
+                    opt.textContent = sym;
+                    sel.appendChild(opt);
+                });
+                if (current) sel.value = current;
+            });
+        } catch (e) {
+            console.error("Failed to populate symbol pickers", e);
+        }
+    }
+
+    async function loadActiveSymbol() {
+        try {
+            const res = await fetch(`${apiBase}/api/trading/active-symbol`);
+            const data = await res.json();
+            activeSymbol = data.symbol;
+            const sel = document.getElementById("strategy-symbol-select");
+            if (sel && activeSymbol) sel.value = activeSymbol;
+            updateMySymbolCard();
+        } catch (e) {
+            console.error("Failed to load active symbol", e);
+        }
+    }
+
+    async function setActiveSymbol(symbol) {
+        try {
+            await fetch(`${apiBase}/api/trading/active-symbol`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ symbol })
+            });
+            activeSymbol = symbol.toUpperCase();
+            updateMySymbolCard();
+            appendTerminalLog("dashboard_client", "active_symbol", `Now working on ${activeSymbol}.`);
+        } catch (e) {
+            console.error("Failed to set active symbol", e);
+        }
+    }
+
+    function updateMySymbolCard() {
+        const emptyEl = document.getElementById("my-symbol-empty");
+        const contentEl = document.getElementById("my-symbol-content");
+        if (!activeSymbol) {
+            emptyEl.style.display = "block";
+            contentEl.style.display = "none";
+            return;
+        }
+        emptyEl.style.display = "none";
+        contentEl.style.display = "block";
+        document.getElementById("my-symbol-name").textContent = activeSymbol;
+
+        const tick = marketDataStore[activeSymbol];
+        if (tick) {
+            document.getElementById("my-symbol-ltp").textContent = `₹${Number(tick.ltp).toFixed(2)}`;
+            const chg = Number(tick.changePct || 0);
+            const chgEl = document.getElementById("my-symbol-change");
+            chgEl.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
+            chgEl.className = `value ${chg >= 0 ? "text-green" : "text-red"}`;
+        } else {
+            document.getElementById("my-symbol-ltp").textContent = "-";
+            document.getElementById("my-symbol-change").textContent = "-";
+        }
+
+        const posEl = document.getElementById("my-symbol-position");
+        const pos = latestOpenPositions.find(p => p.symbol === activeSymbol);
+        if (pos) {
+            const pnlClass = pos.unrealized_pnl >= 0 ? "text-green" : "text-red";
+            posEl.innerHTML = `${pos.side} ${pos.quantity} @ ₹${pos.avg_price.toFixed(2)} &nbsp; <span class="${pnlClass}">₹${pos.unrealized_pnl.toFixed(2)}</span>`;
+        } else {
+            posEl.textContent = "No open position";
+        }
+    }
+
+    async function loadTradingMode() {
+        try {
+            const res = await fetch(`${apiBase}/api/trading/mode`);
+            const data = await res.json();
+            setModeButtonsActive(data.mode);
+        } catch (e) {
+            console.error("Failed to load trading mode", e);
+        }
+        try {
+            const res2 = await fetch(`${apiBase}/api/broker/status`);
+            const status = await res2.json();
+            setBrokerButtonsActive(status.broker);
+        } catch (e) {
+            console.error("Failed to load broker status", e);
+        }
+    }
+
+    function setModeButtonsActive(mode) {
+        document.querySelectorAll(".mode-toggle-btn").forEach(btn => {
+            btn.classList.toggle("active-toggle", btn.getAttribute("data-mode") === mode);
+        });
+        const manualActionsEl = document.getElementById("manual-trade-actions");
+        if (manualActionsEl) manualActionsEl.style.display = mode === "MANUAL" ? "flex" : "none";
+        const badgeEl = document.getElementById("my-symbol-mode-badge");
+        if (badgeEl) {
+            badgeEl.textContent = mode;
+            badgeEl.className = `badge ${mode === "MANUAL" ? "text-orange" : "text-green"}`;
+        }
+        const pendingCard = document.getElementById("pending-confirmations-card");
+        if (pendingCard && mode === "AUTO") pendingCard.style.display = "none";
+    }
+
+    function setBrokerButtonsActive(broker) {
+        document.querySelectorAll(".broker-toggle-btn").forEach(btn => {
+            btn.classList.toggle("active-toggle", btn.getAttribute("data-broker") === broker);
+        });
+    }
+
+    async function setTradingMode(mode) {
+        try {
+            const res = await fetch(`${apiBase}/api/trading/mode`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mode })
+            });
+            const r = await res.json();
+            setModeButtonsActive(r.mode);
+            document.getElementById("strategy-setup-status").textContent = `Trade mode set to ${r.mode}.`;
+        } catch (e) {
+            console.error("Failed to set trading mode", e);
+        }
+    }
+
+    async function setActiveBroker(broker) {
+        try {
+            const res = await fetch(`${apiBase}/api/trading/broker`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ broker })
+            });
+            const r = await res.json();
+            setBrokerButtonsActive(r.broker);
+            document.getElementById("strategy-setup-status").textContent =
+                `Broker switched to ${r.broker === "paper_broker" ? "Paper Trading" : "Real Money (Kotak Neo)"}.`;
+            await fetchBrokerStatus();
+        } catch (e) {
+            console.error("Failed to switch broker", e);
+            document.getElementById("strategy-setup-status").textContent = "Failed to switch broker.";
+        }
+    }
+
+    async function loadStrategySetup() {
+        await populateSymbolPickers();
+        await loadActiveSymbol();
+        await loadTradingMode();
+        try {
+            const res = await fetch(`${apiBase}/api/employees/relevant`);
+            const data = await res.json();
+            const el = document.getElementById("active-strategy-details");
+            if (!data.strategy_name) {
+                el.innerHTML = `<div>No active strategy configured.</div>`;
+                return;
+            }
+            el.innerHTML = `
+                <div><strong>Strategy:</strong> ${data.strategy_name}</div>
+                <div><strong>Instrument segment:</strong> ${data.segment}</div>
+                <div><strong>Relevant AI Employees:</strong> ${data.relevant_codes.length} of 30</div>
+            `;
+        } catch (e) {
+            console.error("Failed to load active strategy", e);
+        }
+    }
+
+    // ── Pending Confirmations (Manual mode) ────────────────────────────────────
+
+    async function fetchPendingConfirmations() {
+        try {
+            const res = await fetch(`${apiBase}/api/trading/pending`);
+            const pending = await res.json();
+            const card = document.getElementById("pending-confirmations-card");
+            const list = document.getElementById("pending-confirmations-list");
+            if (!pending || pending.length === 0) {
+                card.style.display = "none";
+                return;
+            }
+            card.style.display = "block";
+            list.innerHTML = "";
+            pending.forEach(p => {
+                const row = document.createElement("div");
+                row.className = "pending-confirmation-row";
+                row.style.cssText = "display:flex; align-items:center; justify-content:space-between; padding:0.6rem 0; border-bottom:1px solid var(--border-glass);";
+                row.innerHTML = `
+                    <div>
+                        <strong>${p.side} ${p.symbol}</strong>
+                        <span style="color: var(--text-secondary); font-size: 0.85rem;">qty ${p.quantity} @ ₹${Number(p.price).toFixed(2)}</span>
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button class="btn-success btn-xs" data-confirm="${p.decision_id}">Confirm</button>
+                        <button class="btn-danger btn-xs" data-reject="${p.decision_id}">Reject</button>
+                    </div>
+                `;
+                list.appendChild(row);
+            });
+        } catch (e) {
+            console.error("Failed to fetch pending confirmations", e);
+        }
+    }
+
+    async function respondToPendingTrade(decisionId, action) {
+        try {
+            await fetch(`${apiBase}/api/trading/${action}/${decisionId}`, { method: "POST" });
+            appendTerminalLog("dashboard_client", `trade_${action}`, `Trade ${action}ed: ${decisionId}`);
+            await fetchPendingConfirmations();
+            await refreshTables();
+        } catch (e) {
+            console.error(`Failed to ${action} trade`, e);
+        }
+    }
+
+    // ── Backtest ────────────────────────────────────────────────────────────────
+
+    async function runBacktestFromForm(e) {
+        e.preventDefault();
+        const symbol = document.getElementById("backtest-symbol").value;
+        const start = document.getElementById("backtest-start-date").value;
+        const end = document.getElementById("backtest-end-date").value;
+        if (!symbol || !start || !end) {
+            alert("Please select a symbol and date range.");
+            return;
+        }
+        const config = {
+            symbols: [symbol],
+            timeframe: "1m",
+            start_date: new Date(start + "T00:00:00Z").toISOString(),
+            end_date: new Date(end + "T23:59:59Z").toISOString(),
+            initial_capital: 100000.0
+        };
+        try {
+            const res = await fetch(`${apiBase}/api/backtest/run`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(config)
+            });
+            await res.json();
+            document.getElementById("backtest-progress").style.display = "block";
+            document.getElementById("backtest-result-card").style.display = "none";
+            if (backtestPollInterval) clearInterval(backtestPollInterval);
+            backtestPollInterval = setInterval(pollBacktestStatus, 500);
+        } catch (e) {
+            console.error("Failed to start backtest", e);
+        }
+    }
+
+    async function pollBacktestStatus() {
+        try {
+            const res = await fetch(`${apiBase}/api/backtest/status`);
+            const status = await res.json();
+            const pct = status.progress_pct || 0;
+            document.getElementById("backtest-progress-fill").style.width = `${pct}%`;
+            document.getElementById("backtest-progress-text").textContent =
+                `${status.status} — ${pct.toFixed(0)}% (${status.trades_executed || 0} trades so far)`;
+            if (status.status === "COMPLETED" || status.status === "FAILED") {
+                clearInterval(backtestPollInterval);
+                await loadBacktestResult();
+            }
+        } catch (e) {
+            console.error("Failed to poll backtest status", e);
+        }
+    }
+
+    async function loadBacktestResult() {
+        try {
+            const res = await fetch(`${apiBase}/api/backtest/result`);
+            const result = await res.json();
+            if (!result.verdict) return;
+            document.getElementById("backtest-progress").style.display = "none";
+            const card = document.getElementById("backtest-result-card");
+            card.style.display = "block";
+            const badge = document.getElementById("backtest-verdict-badge");
+            badge.textContent = result.verdict.headline;
+            const colorClass = result.verdict.label === "PROFITABLE" ? "text-green"
+                : result.verdict.label === "NOT_PROFITABLE" ? "text-red" : "text-orange";
+            badge.className = `badge ${colorClass}`;
+            document.getElementById("backtest-verdict-detail").textContent = result.verdict.detail || "";
+        } catch (e) {
+            console.error("Failed to load backtest result", e);
+        }
     }
 
     // Fetch employee registry
@@ -303,7 +700,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 empSelect.appendChild(opt);
             });
-            renderMonitoringPage(data.employees);
+            lastEmployeeList = data.employees;
+            const relevantOnlyChk = document.getElementById("chk-relevant-only");
+            if (relevantOnlyChk && relevantOnlyChk.checked) {
+                applyEmployeeRelevanceFilter();
+            } else {
+                renderMonitoringPage(data.employees);
+            }
             renderPerformancePage(data.employees);
         } catch (e) {
             console.error("Failed to fetch employee registry", e);
@@ -436,7 +839,10 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const res = await fetch(`${apiBase}/api/portfolio/positions`);
             const data = await res.json();
-            
+
+            latestOpenPositions = data.open_positions;
+            updateMySymbolCard();
+
             document.getElementById("card-open-pos").textContent = data.open_positions.length;
             document.getElementById("card-closed-trades").textContent = data.closed_positions.length;
 
