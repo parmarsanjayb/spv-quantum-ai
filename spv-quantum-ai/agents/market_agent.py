@@ -3,6 +3,7 @@ from core.agent import BaseAgent, AgentResultModel
 from core.bus import EventModel
 from market.manager import market_data_manager
 from market.models import MarketSession
+from market.persistence import market_data_persistence
 
 class MarketAgent(BaseAgent):
     """
@@ -29,9 +30,11 @@ class MarketAgent(BaseAgent):
 
     async def initialize(self) -> None:
         await market_data_manager.start()
+        await market_data_persistence.start()
         self.log_info("Market Data Engine started by MarketAgent.")
 
     async def shutdown(self) -> None:
+        await market_data_persistence.stop()
         await market_data_manager.stop()
         self.log_info("Market Data Engine stopped by MarketAgent.")
 

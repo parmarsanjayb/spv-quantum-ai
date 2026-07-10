@@ -1,16 +1,33 @@
 import pytest
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from replay.models import ReplayConfig, ReplayState
 from replay.engine import replay_engine
 from core.bus import event_bus, EventModel
+from sqlalchemy import delete
+from database.connection import async_session
+from database.models import MarketDataModel
 
 @pytest.mark.asyncio
 async def test_market_replay_controls():
     event_bus.start()
-    
+
     start = datetime(2026, 7, 4, 9, 0, 0, tzinfo=timezone.utc)
     end = datetime(2026, 7, 4, 9, 5, 0, tzinfo=timezone.utc)
+
+    # replay_engine has no synthetic fallback — seed real candle rows so
+    # there's actual history to replay.
+    async with async_session() as session:
+        await session.execute(delete(MarketDataModel).where(MarketDataModel.symbol == "TCS"))
+        for i in range(6):
+            price = 3500.0 + i * 2.0
+            session.add(MarketDataModel(
+                symbol="TCS", timestamp=start + timedelta(minutes=i), interval="1m",
+                open=price, high=price + 1.0, low=price - 1.0, close=price + 0.5,
+                volume=300.0,
+            ))
+        await session.commit()
+
     config = ReplayConfig(
         symbols=["TCS"],
         timeframe="1m",

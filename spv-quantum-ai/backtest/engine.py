@@ -1,5 +1,7 @@
 import asyncio
+import math
 from datetime import datetime, timezone
+from statistics import pstdev
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -167,12 +169,14 @@ class BacktestingEngine:
             self.progress.progress_pct = 100.0
             
             stats = await trade_journal_engine.get_performance_stats()
+            trades = await trade_journal_engine.repo.get_all_trades()
+            risk_metrics = self._compute_risk_metrics(trades, config.initial_capital)
             metrics = {
                 "total_trades": stats.get("total_trades", 0),
                 "win_rate_pct": stats.get("win_rate", 0.0),
                 "net_profit_loss": stats.get("total_realized_pnl", 0.0),
-                "sharpe_ratio": 1.75,  # Simulated
-                "drawdown_pct": 2.5
+                "sharpe_ratio": risk_metrics["sharpe_ratio"],
+                "drawdown_pct": risk_metrics["drawdown_pct"],
             }
             
             await self.publisher.publish_completed(backtest_id, self.progress, metrics)
@@ -185,6 +189,47 @@ class BacktestingEngine:
             self.progress.status = "FAILED"
             logger.error(f"Backtest {backtest_id} failed: {e}")
             raise e
+
+    @staticmethod
+    def _compute_risk_metrics(trades: List[Any], initial_capital: float) -> Dict[str, float]:
+        """
+        Computes Sharpe ratio and max drawdown from the actual sequence of
+        closed trades produced by this backtest run — no placeholder values.
+        Sharpe uses day-over-day equity returns annualized over 252 trading
+        days, assuming a 0% risk-free rate (standard simplification, not a
+        fabricated result).
+        """
+        if not trades:
+            return {"sharpe_ratio": 0.0, "drawdown_pct": 0.0}
+
+        sorted_trades = sorted(trades, key=lambda t: t.timestamp)
+
+        equity = initial_capital
+        peak = initial_capital
+        max_dd_pct = 0.0
+        daily_equity: Dict[Any, float] = {}
+        for t in sorted_trades:
+            equity += t.realized_pnl
+            peak = max(peak, equity)
+            if peak > 0:
+                max_dd_pct = max(max_dd_pct, (peak - equity) / peak * 100.0)
+            daily_equity[t.timestamp.date()] = equity
+
+        daily_values = [initial_capital] + [v for _, v in sorted(daily_equity.items())]
+        daily_returns = [
+            (daily_values[i] - daily_values[i - 1]) / daily_values[i - 1]
+            for i in range(1, len(daily_values))
+            if daily_values[i - 1] != 0
+        ]
+
+        sharpe = 0.0
+        if len(daily_returns) >= 2:
+            mean_r = sum(daily_returns) / len(daily_returns)
+            std_r = pstdev(daily_returns)
+            if std_r > 0:
+                sharpe = (mean_r / std_r) * math.sqrt(252)
+
+        return {"sharpe_ratio": round(sharpe, 2), "drawdown_pct": round(max_dd_pct, 2)}
 
     async def get_dashboard_status(self) -> Dict[str, Any]:
         """Returns backtest progress and status metrics."""
