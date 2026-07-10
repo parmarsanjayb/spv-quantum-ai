@@ -81,34 +81,15 @@ body {
 .logo-area {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
-    padding: 1.1rem 1.2rem;
+    justify-content: center;
+    padding: 1.1rem 1rem;
     border-bottom: 1px solid var(--border-glass);
 }
 
-.logo-mark {
-    height: 36px;
-    width: auto;
-    flex-shrink: 0;
-    filter: drop-shadow(0 0 5px rgba(255, 140, 0, 0.2));
-}
-
-.logo-area h1 {
-    font-size: 0.95rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    line-height: 1.2;
-    background: linear-gradient(to right, var(--accent-blue), var(--accent-green));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.term-ver {
-    display: block;
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    letter-spacing: 0;
-    -webkit-text-fill-color: var(--text-muted);
+.logo-full-img {
+    width: 100%;
+    height: auto;
+    max-width: 210px;
 }
 
 .status-indicator {
