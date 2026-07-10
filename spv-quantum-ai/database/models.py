@@ -134,3 +134,31 @@ class PerformanceModel(Base):
 
     def __repr__(self) -> str:
         return f"<Performance(equity={self.equity}, pnl={self.pnl}, time={self.timestamp})>"
+
+
+class StrategyDefinitionModel(Base):
+    """
+    Standardized, engine-agnostic strategy definition produced by the
+    Strategy Studio. `definition` is a JSON blob matching the
+    strategies.models.Strategy pydantic schema (rules, exit_rules, actions)
+    — the same schema strategies/engine.py already evaluates, and the same
+    one YAML-file strategies use, so any consumer (live decision pipeline,
+    backtest replay, future modules) reads strategies the same way
+    regardless of where they were authored.
+
+    Versioned: every save is a new immutable row. Exactly one version per
+    strategy_name may have is_active=True at a time — that's the version
+    StrategyEngine loads and evaluates.
+    """
+    __tablename__ = "strategy_definitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(String(100), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    is_active = Column(Boolean, default=False, index=True)
+    description = Column(String(500), nullable=True)
+    definition = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    def __repr__(self) -> str:
+        return f"<StrategyDefinition(name={self.strategy_name}, v={self.version}, active={self.is_active})>"

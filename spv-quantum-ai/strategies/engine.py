@@ -30,7 +30,8 @@ class StrategyEngine:
         self.loader = StrategyLoader(self.registry, directory)
         self.evaluator = RuleEngine()
         self._running = False
-        
+        self._db_loaded_names: set = set()
+
         # Load strategies on startup
         self.loader.load_all()
 
@@ -38,8 +39,47 @@ class StrategyEngine:
         if self._running:
             return
         self._running = True
+        await self.load_from_db()
         await event_bus.subscribe("candle", self._on_candle_event)
         logger.info("StrategyEngine started and subscribed to candle events.")
+
+    async def load_from_db(self) -> None:
+        """
+        Registers every Strategy Studio strategy's active version into the
+        same registry YAML-file strategies use. Studio-authored strategies
+        are evaluated by the identical rule engine — the Studio is purely
+        an authoring/persistence layer, not a separate execution path. Safe
+        to call again any time the Studio saves/activates/deletes a
+        strategy, to hot-reload without a restart.
+        """
+        from database.models import StrategyDefinitionModel
+        from database.connection import async_session
+        from sqlalchemy import select
+
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(StrategyDefinitionModel).where(StrategyDefinitionModel.is_active == True)  # noqa: E712
+                )
+                rows = result.scalars().all()
+        except Exception as e:
+            logger.error("Failed to load Strategy Studio strategies from DB", error=str(e))
+            return
+
+        # Drop any previously DB-loaded strategies that are no longer active
+        # (deleted or deactivated), without touching YAML-loaded strategies.
+        db_names_now = {row.strategy_name for row in rows}
+        for name in list(self.registry._strategies.keys()):
+            if name in self._db_loaded_names and name not in db_names_now:
+                self.registry.unregister(name)
+
+        self._db_loaded_names = db_names_now
+        for row in rows:
+            try:
+                strategy = Strategy(**row.definition)
+                self.registry.register(strategy)
+            except Exception as e:
+                logger.error(f"Failed to register Studio strategy '{row.strategy_name}'", error=str(e))
 
     async def stop(self) -> None:
         self._running = False

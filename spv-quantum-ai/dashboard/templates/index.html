@@ -23,6 +23,7 @@
         <nav class="nav-tabs">
             <button class="tab-btn active" id="btn-tab-terminal" onclick="switchTab('tab-terminal')">Trade</button>
             <button class="tab-btn" id="btn-tab-strategy" onclick="switchTab('tab-strategy')">Strategy Setup</button>
+            <button class="tab-btn" id="btn-tab-studio" onclick="switchTab('tab-studio')">Strategy Studio</button>
             <button class="tab-btn" id="btn-tab-backtest" onclick="switchTab('tab-backtest')">Backtest</button>
             <button class="tab-btn" id="btn-tab-monitoring" onclick="switchTab('tab-monitoring')">AI Employee Monitor</button>
             <button class="tab-btn" id="btn-tab-decisions" onclick="switchTab('tab-decisions')">Decision Log</button>
@@ -445,6 +446,104 @@
                 </div>
                 <div id="active-strategy-details" class="details-grid">
                     <div>Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: STRATEGY STUDIO -->
+        <div id="tab-studio" class="tab-panel">
+            <div class="studio-layout" style="display: grid; grid-template-columns: 320px 1fr; gap: 1rem; margin-top: 1rem; align-items: start;">
+
+                <!-- LEFT: Strategy list -->
+                <div class="card">
+                    <div class="card-header-actions">
+                        <h2>Strategies</h2>
+                        <button class="btn-action btn-xs" id="btn-studio-new">+ New</button>
+                    </div>
+                    <div id="studio-strategy-list"></div>
+                </div>
+
+                <!-- RIGHT: Editor -->
+                <div class="card" id="studio-editor-card" style="display: none;">
+                    <div class="card-header-actions">
+                        <h2 id="studio-editor-title">New Strategy</h2>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn-action btn-xs" id="btn-studio-validate">Validate</button>
+                            <button class="btn-success btn-xs" id="btn-studio-save">Save</button>
+                        </div>
+                    </div>
+
+                    <div id="studio-validation-errors" style="display: none; background: rgba(255,59,48,0.1); border: 1px solid var(--accent-red); border-radius: 6px; padding: 0.8rem; margin-bottom: 1rem; font-size: 0.85rem;"></div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                        <div class="form-group">
+                            <label>Strategy Name</label>
+                            <input type="text" id="studio-name" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <input type="text" id="studio-description" style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label><input type="checkbox" id="studio-enabled" checked> Enabled</label>
+                    </div>
+
+                    <!-- ENTRY RULES -->
+                    <div class="studio-rule-section" style="border-top: 1px solid var(--border-glass); padding-top: 1rem; margin-bottom: 1rem;">
+                        <div class="card-header-actions">
+                            <h3 style="color: var(--accent-green);">Entry Rules (when to BUY)</h3>
+                            <select id="studio-entry-operator" style="padding: 0.3rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass);">
+                                <option value="AND">Match ALL (AND)</option>
+                                <option value="OR">Match ANY (OR)</option>
+                            </select>
+                        </div>
+                        <div id="studio-entry-conditions"></div>
+                        <button class="btn-action btn-xs" id="btn-studio-add-entry-condition" style="margin-top: 0.5rem;">+ Add Condition</button>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem;">Entry Confidence %</label>
+                                <input type="number" id="studio-entry-confidence" value="85" min="0" max="100" style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem;">Entry Reason</label>
+                                <input type="text" id="studio-entry-reason" style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- EXIT RULES -->
+                    <div class="studio-rule-section" style="border-top: 1px solid var(--border-glass); padding-top: 1rem; margin-bottom: 1rem;">
+                        <div class="card-header-actions">
+                            <h3 style="color: var(--accent-red);">Exit Rules (when to SELL)</h3>
+                            <select id="studio-exit-operator" style="padding: 0.3rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass);">
+                                <option value="AND">Match ALL (AND)</option>
+                                <option value="OR">Match ANY (OR)</option>
+                            </select>
+                        </div>
+                        <div id="studio-exit-conditions"></div>
+                        <button class="btn-action btn-xs" id="btn-studio-add-exit-condition" style="margin-top: 0.5rem;">+ Add Condition</button>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem;">Exit Confidence %</label>
+                                <input type="number" id="studio-exit-confidence" value="80" min="0" max="100" style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                            </div>
+                            <div class="form-group">
+                                <label style="font-size: 0.8rem;">Exit Reason</label>
+                                <input type="text" id="studio-exit-reason" style="width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border-glass); background: rgba(0,0,0,0.2); color: var(--text-primary);">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- VERSION HISTORY -->
+                    <div class="studio-rule-section" style="border-top: 1px solid var(--border-glass); padding-top: 1rem;">
+                        <h3>Version History</h3>
+                        <div id="studio-version-history"></div>
+                    </div>
+                </div>
+
+                <div class="card" id="studio-empty-state">
+                    <p style="color: var(--text-secondary); padding: 1rem 0;">Select a strategy on the left to edit it, or click "+ New" to build one from scratch.</p>
                 </div>
             </div>
         </div>

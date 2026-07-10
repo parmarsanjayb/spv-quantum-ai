@@ -37,6 +37,12 @@ document.addEventListener("DOMContentLoaded", () => {
     let pendingConfirmationsInterval;
     let backtestPollInterval;
 
+    // Strategy Studio state
+    let studioSchema = null;
+    let studioStrategies = [];
+    let studioCurrentName = null;   // null = creating a new strategy
+    let studioConditionRowSeq = 0;
+
     window.switchTab = function(tabId) {
         document.querySelectorAll(".nav-tabs .tab-btn").forEach(btn => {
             if (btn.id === `btn-${tabId}`) {
@@ -70,6 +76,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         if (tabId === "tab-backtest") {
             loadBacktestResult();
+        }
+        if (tabId === "tab-studio") {
+            loadStudioStrategyList();
         }
     };
 
@@ -247,6 +256,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Employee Monitor: relevant-only filter
         document.getElementById("chk-relevant-only").addEventListener("change", applyEmployeeRelevanceFilter);
+
+        // Strategy Studio
+        document.getElementById("btn-studio-new").addEventListener("click", openStudioNew);
+        document.getElementById("btn-studio-validate").addEventListener("click", validateStudioForm);
+        document.getElementById("btn-studio-save").addEventListener("click", saveStudioForm);
+        document.getElementById("btn-studio-add-entry-condition").addEventListener("click", () => createConditionRow("studio-entry-conditions"));
+        document.getElementById("btn-studio-add-exit-condition").addEventListener("click", () => createConditionRow("studio-exit-conditions"));
+        document.getElementById("studio-strategy-list").addEventListener("click", (e) => {
+            const openName = e.target.getAttribute("data-open");
+            const cloneName = e.target.getAttribute("data-clone");
+            const deleteName = e.target.getAttribute("data-delete");
+            if (openName) openStudioEdit(openName);
+            if (cloneName) cloneStudioStrategy(cloneName);
+            if (deleteName) deleteStudioStrategy(deleteName);
+        });
     }
 
     async function submitManualOrder(side) {
@@ -672,6 +696,334 @@ document.addEventListener("DOMContentLoaded", () => {
             document.getElementById("backtest-verdict-detail").textContent = result.verdict.detail || "";
         } catch (e) {
             console.error("Failed to load backtest result", e);
+        }
+    }
+
+    // ── Strategy Studio ──────────────────────────────────────────────────────
+
+    async function ensureStudioSchema() {
+        if (studioSchema) return studioSchema;
+        const res = await fetch(`${apiBase}/api/strategy-studio/schema`);
+        studioSchema = await res.json();
+        return studioSchema;
+    }
+
+    async function loadStudioStrategyList() {
+        await ensureStudioSchema();
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/strategies`);
+            studioStrategies = await res.json();
+        } catch (e) {
+            console.error("Failed to load Strategy Studio list", e);
+            studioStrategies = [];
+        }
+        const container = document.getElementById("studio-strategy-list");
+        container.innerHTML = "";
+        if (studioStrategies.length === 0) {
+            container.innerHTML = `<p style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem 0;">No strategies yet — click "+ New" to build one.</p>`;
+        }
+        studioStrategies.forEach(s => {
+            const row = document.createElement("div");
+            row.className = "studio-strategy-row";
+            row.style.cssText = "padding: 0.6rem 0; border-bottom: 1px solid var(--border-glass);";
+            row.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="cursor:pointer;" data-open="${s.strategy_name}">${s.strategy_name}</strong>
+                    <span class="badge ${s.enabled ? 'text-green' : ''}" style="font-size: 0.7rem;">v${s.active_version}</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-secondary); margin: 0.2rem 0;">${s.description || ''}</div>
+                <div style="display:flex; gap: 0.4rem; margin-top: 0.3rem;">
+                    <button class="btn-action btn-xs" data-open="${s.strategy_name}">Edit</button>
+                    <button class="btn-action btn-xs" data-clone="${s.strategy_name}">Clone</button>
+                    <button class="btn-danger btn-xs" data-delete="${s.strategy_name}">Delete</button>
+                </div>
+            `;
+            container.appendChild(row);
+        });
+    }
+
+    function studioSourceOptions(selected) {
+        return studioSchema.sources.map(s => `<option value="${s}" ${s === selected ? "selected" : ""}>${s}</option>`).join("");
+    }
+
+    function studioOperatorOptions(selected) {
+        return studioSchema.operators.map(o => `<option value="${o}" ${o === selected ? "selected" : ""}>${o}</option>`).join("");
+    }
+
+    function studioIndicatorOptions(selected) {
+        let opts = `<option value="">-- text/number --</option>`;
+        opts += studioSchema.indicators.map(i => `<option value="${i.key}" ${i.key === selected ? "selected" : ""}>${i.key}</option>`).join("");
+        return opts;
+    }
+
+    function createConditionRow(containerId, condition) {
+        condition = condition || {};
+        const rowId = `cond-row-${studioConditionRowSeq++}`;
+        const container = document.getElementById(containerId);
+        const row = document.createElement("div");
+        row.className = "studio-condition-row";
+        row.id = rowId;
+        row.style.cssText = "display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 1fr 1.2fr auto; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem;";
+
+        const isIndicator = (condition.source || "indicator") === "indicator";
+        row.innerHTML = `
+            <select class="cond-source" style="padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass);">${studioSourceOptions(condition.source || "indicator")}</select>
+            <select class="cond-key" style="padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass); display:${isIndicator ? "block" : "none"};">${studioIndicatorOptions(condition.key)}</select>
+            <input class="cond-key-text" type="text" placeholder="key" value="${condition.source && !isIndicator ? (condition.key || "") : ""}" style="padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.2); color: var(--text-primary); border: 1px solid var(--border-glass); display:${isIndicator ? "none" : "block"};">
+            <select class="cond-operator" style="padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass);">${studioOperatorOptions(condition.operator)}</select>
+            <input class="cond-value" type="text" placeholder="value (e.g. 50 or TRENDING_BULLISH)" value="${condition.value !== undefined && condition.value !== null ? condition.value : ""}" style="padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.2); color: var(--text-primary); border: 1px solid var(--border-glass);">
+            <div style="display:flex; gap:0.3rem;">
+                <select class="cond-target" style="flex:1; padding: 0.35rem; border-radius: 6px; background: rgba(0,0,0,0.3); color: var(--text-primary); border: 1px solid var(--border-glass);" title="Target indicator (for comparing two indicators)">${studioIndicatorOptions(condition.target)}</select>
+                <button class="btn-danger btn-xs" type="button" data-remove-row="${rowId}">✕</button>
+            </div>
+        `;
+        container.appendChild(row);
+
+        row.querySelector(".cond-source").addEventListener("change", (e) => {
+            const indicatorMode = e.target.value === "indicator";
+            row.querySelector(".cond-key").style.display = indicatorMode ? "block" : "none";
+            row.querySelector(".cond-key-text").style.display = indicatorMode ? "none" : "block";
+        });
+        row.querySelector("[data-remove-row]").addEventListener("click", () => row.remove());
+    }
+
+    function collectConditionsFromContainer(containerId) {
+        const container = document.getElementById(containerId);
+        const conditions = [];
+        container.querySelectorAll(".studio-condition-row").forEach(row => {
+            const source = row.querySelector(".cond-source").value;
+            const isIndicator = source === "indicator";
+            const key = isIndicator ? row.querySelector(".cond-key").value : row.querySelector(".cond-key-text").value;
+            const operator = row.querySelector(".cond-operator").value;
+            const rawValue = row.querySelector(".cond-value").value;
+            const target = row.querySelector(".cond-target").value;
+
+            const cond = { source, operator: operator };
+            if (key) cond.key = key;
+            if (target) cond.target = target;
+            if (rawValue !== "") {
+                const num = Number(rawValue);
+                cond.value = (rawValue.trim() !== "" && !isNaN(num)) ? num : rawValue;
+            }
+            conditions.push(cond);
+        });
+        return conditions;
+    }
+
+    function resetStudioForm() {
+        document.getElementById("studio-name").value = "";
+        document.getElementById("studio-name").disabled = false;
+        document.getElementById("studio-description").value = "";
+        document.getElementById("studio-enabled").checked = true;
+        document.getElementById("studio-entry-operator").value = "AND";
+        document.getElementById("studio-exit-operator").value = "AND";
+        document.getElementById("studio-entry-confidence").value = 85;
+        document.getElementById("studio-entry-reason").value = "";
+        document.getElementById("studio-exit-confidence").value = 80;
+        document.getElementById("studio-exit-reason").value = "";
+        document.getElementById("studio-entry-conditions").innerHTML = "";
+        document.getElementById("studio-exit-conditions").innerHTML = "";
+        document.getElementById("studio-validation-errors").style.display = "none";
+        document.getElementById("studio-version-history").innerHTML = "";
+    }
+
+    async function openStudioNew() {
+        await ensureStudioSchema();
+        studioCurrentName = null;
+        resetStudioForm();
+        document.getElementById("studio-editor-title").textContent = "New Strategy";
+        document.getElementById("studio-editor-card").style.display = "block";
+        document.getElementById("studio-empty-state").style.display = "none";
+        createConditionRow("studio-entry-conditions");
+        createConditionRow("studio-exit-conditions");
+    }
+
+    async function openStudioEdit(name) {
+        await ensureStudioSchema();
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/strategies/${encodeURIComponent(name)}/versions`);
+            const versions = await res.json();
+            const active = versions.find(v => v.is_active) || versions[0];
+
+            studioCurrentName = name;
+            resetStudioForm();
+            document.getElementById("studio-editor-title").textContent = `Edit: ${name}`;
+            document.getElementById("studio-editor-card").style.display = "block";
+            document.getElementById("studio-empty-state").style.display = "none";
+
+            document.getElementById("studio-name").value = name;
+            document.getElementById("studio-name").disabled = true; // renaming = clone instead
+            const def = active.definition;
+            document.getElementById("studio-description").value = def.description || "";
+            document.getElementById("studio-enabled").checked = def.enabled !== false;
+
+            document.getElementById("studio-entry-operator").value = def.rules.operator;
+            (def.rules.conditions || []).forEach(c => createConditionRow("studio-entry-conditions", c));
+            const matched = (def.actions || {}).matched || {};
+            document.getElementById("studio-entry-confidence").value = matched.confidence || 85;
+            document.getElementById("studio-entry-reason").value = matched.reason || "";
+
+            if (def.exit_rules) {
+                document.getElementById("studio-exit-operator").value = def.exit_rules.operator;
+                (def.exit_rules.conditions || []).forEach(c => createConditionRow("studio-exit-conditions", c));
+            }
+            const exitAction = (def.actions || {}).exit || {};
+            document.getElementById("studio-exit-confidence").value = exitAction.confidence || 80;
+            document.getElementById("studio-exit-reason").value = exitAction.reason || "";
+
+            renderVersionHistory(versions);
+        } catch (e) {
+            console.error("Failed to open strategy for editing", e);
+        }
+    }
+
+    function renderVersionHistory(versions) {
+        const container = document.getElementById("studio-version-history");
+        container.innerHTML = "";
+        versions.sort((a, b) => b.version - a.version).forEach(v => {
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding: 0.4rem 0; border-bottom: 1px solid var(--border-glass); font-size: 0.85rem;";
+            row.innerHTML = `
+                <span>v${v.version} ${v.is_active ? '<span class="badge text-green" style="font-size:0.7rem;">ACTIVE</span>' : ''} — ${new Date(v.created_at).toLocaleString()}</span>
+                ${v.is_active ? "" : `<button class="btn-action btn-xs" data-activate-version="${v.version}">Activate</button>`}
+            `;
+            container.appendChild(row);
+        });
+        container.querySelectorAll("[data-activate-version]").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                await fetch(`${apiBase}/api/strategy-studio/strategies/${encodeURIComponent(studioCurrentName)}/activate/${btn.getAttribute("data-activate-version")}`, { method: "POST" });
+                await loadStudioStrategyList();
+                await openStudioEdit(studioCurrentName);
+            });
+        });
+    }
+
+    function buildDefinitionFromForm() {
+        const name = document.getElementById("studio-name").value.trim();
+        const entryConditions = collectConditionsFromContainer("studio-entry-conditions");
+        const exitConditions = collectConditionsFromContainer("studio-exit-conditions");
+
+        const definition = {
+            name,
+            version: "1.0.0",
+            description: document.getElementById("studio-description").value,
+            enabled: document.getElementById("studio-enabled").checked,
+            rules: {
+                operator: document.getElementById("studio-entry-operator").value,
+                conditions: entryConditions,
+            },
+            actions: {
+                matched: {
+                    action: "SIGNAL_BUY",
+                    confidence: Number(document.getElementById("studio-entry-confidence").value) || 0,
+                    reason: document.getElementById("studio-entry-reason").value || "Entry rules matched.",
+                },
+            },
+        };
+
+        if (exitConditions.length > 0) {
+            definition.exit_rules = {
+                operator: document.getElementById("studio-exit-operator").value,
+                conditions: exitConditions,
+            };
+            definition.actions.exit = {
+                action: "SIGNAL_SELL",
+                confidence: Number(document.getElementById("studio-exit-confidence").value) || 0,
+                reason: document.getElementById("studio-exit-reason").value || "Exit rules matched.",
+            };
+        }
+
+        return { name, definition };
+    }
+
+    function showStudioErrors(errors) {
+        const el = document.getElementById("studio-validation-errors");
+        if (!errors || errors.length === 0) {
+            el.style.display = "none";
+            el.innerHTML = "";
+            return;
+        }
+        el.style.display = "block";
+        el.innerHTML = `<strong>Fix these before saving:</strong><ul style="margin: 0.4rem 0 0 1.2rem;">${errors.map(e => `<li>${e}</li>`).join("")}</ul>`;
+    }
+
+    async function validateStudioForm() {
+        const { name, definition } = buildDefinitionFromForm();
+        if (!name) {
+            showStudioErrors(["Strategy name is required."]);
+            return false;
+        }
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/validate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ definition }),
+            });
+            const result = await res.json();
+            showStudioErrors(result.errors);
+            return result.valid;
+        } catch (e) {
+            console.error("Validation request failed", e);
+            return false;
+        }
+    }
+
+    async function saveStudioForm() {
+        const valid = await validateStudioForm();
+        if (!valid) return;
+        const { name, definition } = buildDefinitionFromForm();
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/strategies/${encodeURIComponent(name)}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ definition, activate: true }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                showStudioErrors(Array.isArray(err.message) ? err.message : [err.message || "Save failed."]);
+                return;
+            }
+            appendTerminalLog("dashboard_client", "strategy_studio", `Saved strategy '${name}'.`);
+            await loadStudioStrategyList();
+            await openStudioEdit(name);
+        } catch (e) {
+            console.error("Failed to save strategy", e);
+        }
+    }
+
+    async function cloneStudioStrategy(name) {
+        const newName = prompt(`Clone "${name}" as:`, `${name}_copy`);
+        if (!newName) return;
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/strategies/${encodeURIComponent(name)}/clone`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ new_name: newName }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                alert(err.detail || "Clone failed.");
+                return;
+            }
+            await loadStudioStrategyList();
+            await openStudioEdit(newName);
+        } catch (e) {
+            console.error("Failed to clone strategy", e);
+        }
+    }
+
+    async function deleteStudioStrategy(name) {
+        if (!confirm(`Delete strategy "${name}" and all its versions? This can't be undone.`)) return;
+        try {
+            await fetch(`${apiBase}/api/strategy-studio/strategies/${encodeURIComponent(name)}`, { method: "DELETE" });
+            if (studioCurrentName === name) {
+                document.getElementById("studio-editor-card").style.display = "none";
+                document.getElementById("studio-empty-state").style.display = "block";
+                studioCurrentName = null;
+            }
+            await loadStudioStrategyList();
+        } catch (e) {
+            console.error("Failed to delete strategy", e);
         }
     }
 

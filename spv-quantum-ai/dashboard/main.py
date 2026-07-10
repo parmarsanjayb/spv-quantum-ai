@@ -701,6 +701,64 @@ async def evaluate_strategies_now(symbol: str, timeframe: str):
     results = await _se.evaluate_all(symbol.upper(), tf)
     return [r.model_dump() for r in results]
 
+# ── Strategy Studio API Endpoints (no-code strategy builder) ─────────────────
+from strategies.studio import strategy_studio as _studio, StrategyValidationError
+
+@app.get("/api/strategy-studio/schema")
+async def get_strategy_studio_schema():
+    """Indicators/operators/sources/actions for the form-based builder's dropdowns."""
+    return await _studio.get_ui_schema()
+
+@app.get("/api/strategy-studio/strategies")
+async def list_studio_strategies():
+    return await _studio.list_strategies()
+
+@app.get("/api/strategy-studio/strategies/{name}/versions")
+async def list_studio_strategy_versions(name: str):
+    versions = await _studio.list_versions(name)
+    if not versions:
+        raise HTTPException(status_code=404, detail=f"Strategy '{name}' not found.")
+    return versions
+
+class StrategyDefinitionPayload(BaseModel):
+    definition: Dict[str, Any]
+    activate: bool = True
+
+@app.post("/api/strategy-studio/validate")
+async def validate_studio_strategy(payload: StrategyDefinitionPayload):
+    errors = await _studio.validate(payload.definition)
+    return {"valid": len(errors) == 0, "errors": errors}
+
+@app.post("/api/strategy-studio/strategies/{name}")
+async def save_studio_strategy(name: str, payload: StrategyDefinitionPayload):
+    """Creates the first version, or a new version if the strategy already exists."""
+    try:
+        return await _studio.save_new_version(name, payload.definition, activate=payload.activate)
+    except StrategyValidationError as e:
+        raise HTTPException(status_code=400, detail=e.errors)
+
+class CloneRequest(BaseModel):
+    new_name: str
+
+@app.post("/api/strategy-studio/strategies/{name}/clone")
+async def clone_studio_strategy(name: str, payload: CloneRequest):
+    try:
+        return await _studio.clone_strategy(name, payload.new_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/strategy-studio/strategies/{name}/activate/{version}")
+async def activate_studio_strategy_version(name: str, version: int):
+    try:
+        return await _studio.activate_version(name, version)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@app.delete("/api/strategy-studio/strategies/{name}")
+async def delete_studio_strategy(name: str):
+    await _studio.delete_strategy(name)
+    return {"status": "SUCCESS", "message": f"Strategy '{name}' deleted."}
+
 # ── Market Analysis Intelligence Layer API Endpoints ────────────────────────
 from analysis.engine import market_analysis_engine as _mae
 
