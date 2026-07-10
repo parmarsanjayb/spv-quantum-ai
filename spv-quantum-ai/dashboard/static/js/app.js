@@ -42,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let studioStrategies = [];
     let studioCurrentName = null;   // null = creating a new strategy
     let studioConditionRowSeq = 0;
+    let backtestEquityChart = null;
 
     window.switchTab = function(tabId) {
         document.querySelectorAll(".nav-tabs .tab-btn").forEach(btn => {
@@ -75,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
             loadStrategySetup();
         }
         if (tabId === "tab-backtest") {
+            populateBacktestStrategyPicker();
             loadBacktestResult();
         }
         if (tabId === "tab-studio") {
@@ -631,13 +633,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ── Backtest ────────────────────────────────────────────────────────────────
 
+    async function populateBacktestStrategyPicker() {
+        try {
+            const res = await fetch(`${apiBase}/api/strategy-studio/strategies`);
+            const studioList = await res.json();
+            const res2 = await fetch(`${apiBase}/api/strategies/active`);
+            const yamlList = await res2.json();
+
+            const studioNames = new Set(studioList.map(s => s.strategy_name));
+            const allNames = [...studioNames, ...yamlList.map(s => s.name).filter(n => !studioNames.has(n))];
+
+            const sel = document.getElementById("backtest-strategy");
+            const current = sel.value;
+            sel.innerHTML = `<option value="">-- Select Strategy --</option>`;
+            allNames.forEach(name => {
+                const opt = document.createElement("option");
+                opt.value = name;
+                opt.textContent = name;
+                sel.appendChild(opt);
+            });
+            if (current) sel.value = current;
+        } catch (e) {
+            console.error("Failed to populate backtest strategy picker", e);
+        }
+    }
+
     async function runBacktestFromForm(e) {
         e.preventDefault();
+        const strategyName = document.getElementById("backtest-strategy").value;
         const symbol = document.getElementById("backtest-symbol").value;
         const start = document.getElementById("backtest-start-date").value;
         const end = document.getElementById("backtest-end-date").value;
-        if (!symbol || !start || !end) {
-            alert("Please select a symbol and date range.");
+        if (!strategyName || !symbol || !start || !end) {
+            alert("Please select a strategy, symbol, and date range.");
             return;
         }
         const config = {
@@ -645,7 +673,8 @@ document.addEventListener("DOMContentLoaded", () => {
             timeframe: "1m",
             start_date: new Date(start + "T00:00:00Z").toISOString(),
             end_date: new Date(end + "T23:59:59Z").toISOString(),
-            initial_capital: 100000.0
+            initial_capital: 100000.0,
+            strategy_name: strategyName
         };
         try {
             const res = await fetch(`${apiBase}/api/backtest/run`, {
@@ -694,9 +723,104 @@ document.addEventListener("DOMContentLoaded", () => {
                 : result.verdict.label === "NOT_PROFITABLE" ? "text-red" : "text-orange";
             badge.className = `badge ${colorClass}`;
             document.getElementById("backtest-verdict-detail").textContent = result.verdict.detail || "";
+
+            renderBacktestMetricsGrid(result.metrics || {});
+            renderBacktestEquityChart(result.equity_curve || []);
+            renderBacktestTradeLog(result.trade_log || []);
         } catch (e) {
             console.error("Failed to load backtest result", e);
         }
+    }
+
+    function renderBacktestMetricsGrid(metrics) {
+        const grid = document.getElementById("backtest-metrics-grid");
+        if (!metrics.total_trades && metrics.total_trades !== 0) {
+            grid.innerHTML = "";
+            return;
+        }
+        const pnlClass = (metrics.net_profit_loss || 0) >= 0 ? "text-green" : "text-red";
+        const pf = metrics.profit_factor;
+        const tiles = [
+            ["Total Trades", metrics.total_trades ?? 0],
+            ["Winning Trades", metrics.winning_trades ?? 0],
+            ["Losing Trades", metrics.losing_trades ?? 0],
+            ["Win Rate", `${(metrics.win_rate_pct ?? 0).toFixed(1)}%`],
+            ["Loss Rate", `${(metrics.loss_rate_pct ?? 0).toFixed(1)}%`],
+            ["Net P&L", `₹${(metrics.net_profit_loss ?? 0).toFixed(2)}`, pnlClass],
+            ["Profit Factor", pf === null || pf === undefined ? "N/A" : pf.toFixed(2)],
+            ["Max Drawdown", `${(metrics.drawdown_pct ?? 0).toFixed(1)}%`],
+            ["Sharpe Ratio", (metrics.sharpe_ratio ?? 0).toFixed(2)],
+        ];
+        grid.innerHTML = tiles.map(([label, value, cls]) => `
+            <div class="metric-card">
+                <span class="label">${label}</span>
+                <span class="value ${cls || ''}">${value}</span>
+            </div>
+        `).join("");
+    }
+
+    function renderBacktestEquityChart(equityCurve) {
+        const ctx = document.getElementById("backtest-equity-chart");
+        if (!ctx || typeof Chart === "undefined") return;
+
+        const labels = equityCurve.map((p, i) => i === 0 ? "Start" : `Trade ${i}`);
+        const data = equityCurve.map(p => p.equity);
+
+        if (backtestEquityChart) {
+            backtestEquityChart.data.labels = labels;
+            backtestEquityChart.data.datasets[0].data = data;
+            backtestEquityChart.update();
+            return;
+        }
+        backtestEquityChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: "Equity (₹)",
+                    data: data,
+                    borderColor: "#00f5a0",
+                    backgroundColor: "rgba(0, 245, 160, 0.1)",
+                    fill: true,
+                    tension: 0.2,
+                    borderWidth: 2,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, labels: { color: "#f3f4f6" } },
+                    tooltip: { mode: "index", intersect: false },
+                },
+                scales: {
+                    y: { grid: { color: "rgba(255,255,255,0.05)" }, ticks: { color: "#9ca3af" } },
+                    x: { grid: { display: false }, ticks: { color: "#9ca3af" } },
+                },
+            },
+        });
+    }
+
+    function renderBacktestTradeLog(tradeLog) {
+        const body = document.getElementById("backtest-trade-log-body");
+        if (!tradeLog || tradeLog.length === 0) {
+            body.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No trades in this run.</td></tr>`;
+            return;
+        }
+        body.innerHTML = tradeLog.map(t => {
+            const pnlClass = t.realized_pnl >= 0 ? "text-green" : "text-red";
+            return `
+                <tr>
+                    <td>${new Date(t.timestamp).toLocaleString()}</td>
+                    <td><b>${t.symbol}</b></td>
+                    <td><span class="${t.side === 'BUY' ? 'text-green' : 'text-red'}">${t.side}</span></td>
+                    <td>₹${Number(t.entry_price).toFixed(2)}</td>
+                    <td>${t.exit_price !== null && t.exit_price !== undefined ? "₹" + Number(t.exit_price).toFixed(2) : "-"}</td>
+                    <td>${t.quantity}</td>
+                    <td class="${pnlClass}">₹${Number(t.realized_pnl).toFixed(2)}</td>
+                </tr>
+            `;
+        }).join("");
     }
 
     // ── Strategy Studio ──────────────────────────────────────────────────────

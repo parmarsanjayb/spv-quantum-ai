@@ -7,6 +7,7 @@ from core.bus import event_bus, EventModel
 from sqlalchemy import delete
 from database.connection import async_session
 from database.models import MarketDataModel
+from brokers.manager import broker_manager
 
 @pytest.mark.asyncio
 async def test_market_replay_controls():
@@ -84,4 +85,41 @@ async def test_market_replay_controls():
     assert status["progress_pct"] == 100.0
     
     await replay_engine.stop()
+    await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_replay_forces_paper_broker_and_restores_original_after():
+    """Same real-money guarantee as the backtest engine: a replay run must
+    force paper_broker even if kotak_neo is active elsewhere, and restore
+    the original active broker once stopped."""
+    event_bus.start()
+    original = broker_manager._active_broker_name
+    broker_manager._active_broker_name = "kotak_neo"
+
+    start = datetime(2026, 7, 4, 9, 0, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 4, 9, 1, 0, tzinfo=timezone.utc)
+    async with async_session() as session:
+        await session.execute(delete(MarketDataModel).where(MarketDataModel.symbol == "REPLAYSAFETYTEST"))
+        session.add(MarketDataModel(
+            symbol="REPLAYSAFETYTEST", timestamp=start, interval="1m",
+            open=100.0, high=101.0, low=99.0, close=100.5, volume=100.0,
+        ))
+        await session.commit()
+
+    config = ReplayConfig(
+        symbols=["REPLAYSAFETYTEST"], timeframe="1m",
+        start_date=start, end_date=end, speed="1x", mode="Full Trading System",
+    )
+
+    try:
+        await replay_engine.start()
+        await replay_engine.setup_replay(config)
+        # setup_replay pins the broker while resetting trading state
+        assert broker_manager._active_broker_name == "paper_broker"
+    finally:
+        await replay_engine.stop()
+
+    assert broker_manager._active_broker_name == "kotak_neo"
+    broker_manager._active_broker_name = original
     await event_bus.stop()

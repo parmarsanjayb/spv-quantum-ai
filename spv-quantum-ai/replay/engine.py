@@ -29,6 +29,7 @@ class ReplayEngine:
         self._candles: List[Any] = []
         self._current_index = 0
         self._replay_task: Optional[asyncio.Task] = None
+        self._original_broker_name: Optional[str] = None
         self._resume_event = asyncio.Event()
         self._resume_event.set()  # Playing by default
         self._speed_delays = {
@@ -77,8 +78,16 @@ class ReplayEngine:
         self._current_index = 0
         self._resume_event.set()
         
-        # Reset trading system if full trading is configured
+        # Reset trading system if full trading is configured. SAFETY: pin the
+        # active broker to paper_broker for the duration of this replay — the
+        # same real-money isolation guarantee as BacktestingEngine (see its
+        # _execute_simulation docstring). broker_manager.load("paper_broker")
+        # alone does not make it active, so without this a replay run while
+        # kotak_neo is selected elsewhere in the app would place real orders.
         if config.mode == "Full Trading System":
+            self._original_broker_name = broker_manager._active_broker_name
+            await broker_manager.load("paper_broker")
+            broker_manager._active_broker_name = "paper_broker"
             await self._reset_trading_state(config.initial_capital)
             
         logger.info(f"Replay {replay_id} setup complete. Total candles: {total}")
@@ -119,7 +128,7 @@ class ReplayEngine:
         """Stops the playback loop completely."""
         self.state.status = "STOPPED"
         self._resume_event.set()
-        
+
         if self._replay_task:
             self._replay_task.cancel()
             try:
@@ -127,7 +136,11 @@ class ReplayEngine:
             except asyncio.CancelledError:
                 pass
             self._replay_task = None
-            
+
+        if self._original_broker_name is not None:
+            broker_manager._active_broker_name = self._original_broker_name
+            self._original_broker_name = None
+
         await self.publisher.publish_stopped(self.state.replay_id)
         logger.info(f"Replay {self.state.replay_id} stopped.")
 

@@ -12,6 +12,10 @@ class BacktestConfig(BaseModel):
     slippage_pct: float = 0.0005  # 0.05%
     brokerage_per_order: float = 20.0  # Flat flat per order
     spread_pct: float = 0.0002
+    # Isolates the run to exactly this strategy (by name — Strategy Studio or
+    # YAML, the backtest doesn't care which). None = whatever's currently
+    # enabled in the registry, unchanged from prior behavior.
+    strategy_name: Optional[str] = None
 
 class BacktestProgress(BaseModel):
     backtest_id: str
