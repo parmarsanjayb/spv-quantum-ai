@@ -240,3 +240,60 @@ async def test_strategy_engine_integration(tmp_path):
     await engine.stop()
     await event_bus.unsubscribe("strategy_matched", cb)
     await event_bus.stop()
+
+
+@pytest.mark.asyncio
+async def test_strategy_engine_exit_rules_fire_when_entry_does_not_match(tmp_path):
+    """exit_rules must be evaluated (and produce actions.exit) once the entry
+    condition stops matching — this is what turns an exit signal into a real
+    SELL, not just an entry-only strategy that never closes its own trades."""
+    event_bus.start()
+
+    dir_path = tmp_path / "strategies"
+    dir_path.mkdir()
+
+    sample_strategy = {
+        "name": "test_exit_rule",
+        "version": "1.0.0",
+        "enabled": True,
+        "rules": {
+            "operator": "AND",
+            "conditions": [
+                {"source": "indicator", "key": "RSI", "operator": ">", "value": 70.0}
+            ]
+        },
+        "exit_rules": {
+            "operator": "AND",
+            "conditions": [
+                {"source": "indicator", "key": "RSI", "operator": "<", "value": 30.0}
+            ]
+        },
+        "actions": {
+            "matched": {"action": "SIGNAL_BUY", "confidence": 85.0, "reason": "RSI overbought entry"},
+            "exit": {"action": "SIGNAL_SELL", "confidence": 80.0, "reason": "RSI oversold exit"},
+        },
+    }
+    file_path = dir_path / "exit_rule.yaml"
+    with open(file_path, "w") as f:
+        yaml.safe_dump(sample_strategy, f)
+
+    engine = StrategyEngine(directory=str(dir_path))
+    await engine.start()
+
+    from indicators.engine import indicator_engine
+    from indicators.models import IndicatorResult
+
+    await indicator_engine.cache.store(IndicatorResult(
+        indicator_name="RSI", symbol="EXITTEST", timeframe=Timeframe.M1, value=20.0,
+    ))
+
+    responses = await engine.evaluate_all("EXITTEST", Timeframe.M1)
+
+    assert len(responses) == 1
+    resp = responses[0]
+    assert resp.matched is True
+    assert resp.required_action == "SIGNAL_SELL"
+    assert resp.confidence == 80.0
+
+    await engine.stop()
+    await event_bus.stop()

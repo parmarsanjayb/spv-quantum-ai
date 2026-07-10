@@ -147,6 +147,7 @@ class DecisionScoringEngine:
             missing_requirements=missing_reqs,
             conflicting_signals=conflicts,
             reasoning_summary=reasoning,
+            strategy_action=strategy_action,
             timestamp=datetime.now(timezone.utc)
         )
 

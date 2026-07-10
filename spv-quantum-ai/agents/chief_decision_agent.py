@@ -42,6 +42,7 @@ class ApprovalManager:
         symbol = payload.get("symbol", "UNKNOWN")
         confidence = float(payload.get("overall_confidence") or payload.get("confidence") or 0.0)
         risk_status = payload.get("risk_status", "BLOCK")
+        side = payload.get("side", "BUY")
 
         # 1. Decision Confidence Check
         if confidence < self.min_confidence:
@@ -51,8 +52,21 @@ class ApprovalManager:
         if risk_status != "ALLOW":
             return "BLOCKED", "RISK_REJECTION", f"Risk engine returned status: {risk_status}"
 
+        # A closing SELL (exit signal against an existing long position) doesn't
+        # open new exposure, so the position-count and capital checks below
+        # only make sense for a BUY (new entry) — they'd otherwise block every
+        # exit once the account is at its position/capital limits, which is
+        # backwards: exits are exactly what should be allowed to fire then.
+        open_pos_list = await portfolio_engine.positions.get_open_positions()
+        is_open = any(p.symbol == symbol for p in open_pos_list)
+
+        if side == "SELL":
+            if not is_open:
+                return "REJECTED", "NO_POSITION_TO_CLOSE", f"No open position in {symbol} to sell/close."
+            return "APPROVED", "SUCCESS", "Exit signal approved to close existing position."
+
         # 3. Open Positions Limit
-        open_pos = len(await portfolio_engine.positions.get_open_positions())
+        open_pos = len(open_pos_list)
         if open_pos >= self.max_open_positions:
             return "REJECTED", "POSITION_LIMIT_EXCEEDED", f"Active positions {open_pos} exceed limit {self.max_open_positions}"
 
@@ -63,8 +77,6 @@ class ApprovalManager:
             return "REJECTED", "CAPITAL_UNAVAILABLE", "Available margin is zero or negative."
 
         # 5. Duplicate Trade Check
-        open_pos_list = await portfolio_engine.positions.get_open_positions()
-        is_open = any(p.symbol == symbol for p in open_pos_list)
         if is_open:
             return "REJECTED", "DUPLICATE_TRADE", f"An active position already exists for {symbol}."
 
@@ -166,13 +178,18 @@ class ChiefDecisionAgent(BaseAgent):
         risk_status = score_data.get("risk_status", "ALLOW")
         strategy_name = score_data.get("recommended_strategy", "trend_strategy")
 
+        # The strategy engine's exit_rules (Death Cross etc.) produce
+        # SIGNAL_SELL; anything else defaults to BUY as before.
+        strategy_action = score_data.get("strategy_action", "SIGNAL_NONE")
+        side = "SELL" if strategy_action == "SIGNAL_SELL" else "BUY"
+
         async with self._lock:
             # 1. Resolve primary conflicts
             state = self.resolver.resolve(confidence, risk_status)
 
             # 2. Run detailed mandatory checks
             if state != "REJECTED":
-                chk_state, code, explanation = await self.coordinator.validate_checks(score_data)
+                chk_state, code, explanation = await self.coordinator.validate_checks({**score_data, "side": side})
                 if chk_state != "APPROVED":
                     state = chk_state
                 else:
@@ -199,6 +216,16 @@ class ChiefDecisionAgent(BaseAgent):
                 explanation = f"No live Kotak Neo price available for {symbol}; refusing to approve an unpriced order."
                 self.log_warning(f"Chief Decision: rejecting {symbol} — no live LTP available.")
 
+            # A SELL is an exit against an existing position — close the
+            # actual held quantity, not a default entry-sizing quantity
+            # (which has no relationship to what's currently open).
+            quantity = score_data.get("quantity", 10.0)
+            if side == "SELL":
+                open_positions = await portfolio_engine.positions.get_open_positions()
+                existing = next((p for p in open_positions if p.symbol == symbol), None)
+                if existing:
+                    quantity = existing.quantity
+
             # Build record payload
             record = {
                 "decision_id": f"DEC-{uuid.uuid4().hex[:8]}",
@@ -209,14 +236,18 @@ class ChiefDecisionAgent(BaseAgent):
                 "reason_code": code,
                 "explanation": explanation,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "side": score_data.get("side", "BUY"),
-                "quantity": score_data.get("quantity", 10.0),
+                "side": side,
+                "quantity": quantity,
                 "price": live_price or 0.0,
             }
 
             # 3. Publish and Queue
             if state == "APPROVED":
-                self.coordinator.increment_daily_trades()
+                if side == "BUY":
+                    # The daily-trade cap is a new-entry throttle; closing an
+                    # existing position isn't a fresh speculative trade and
+                    # shouldn't eat into that budget.
+                    self.coordinator.increment_daily_trades()
                 self.approved_queue.append(record)
                 await self.publisher.publish_approved(record)
             elif state == "BLOCKED":

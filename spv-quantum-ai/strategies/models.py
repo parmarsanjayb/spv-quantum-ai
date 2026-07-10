@@ -20,7 +20,8 @@ class Strategy(BaseModel):
     version: str
     description: str = ""
     enabled: bool = True
-    rules: RuleGroup
+    rules: RuleGroup                          # entry condition (actions.matched)
+    exit_rules: Optional[RuleGroup] = None     # exit condition (actions.exit), evaluated when rules didn't match
     actions: Dict[str, Any] = Field(default_factory=dict)
 
 # Rebuilding forward refs for nested RuleGroup

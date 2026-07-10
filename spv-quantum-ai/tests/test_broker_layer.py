@@ -94,6 +94,57 @@ async def test_paper_broker_place_and_cancel_order() -> None:
     cancel_resp = await broker.cancel_order(order_id)
     assert cancel_resp.success is False
 
+
+@pytest.mark.asyncio
+async def test_paper_broker_opposite_side_fill_closes_position_instead_of_opening_phantom() -> None:
+    """A SELL against an open BUY must net against and close that position —
+    previously positions were keyed by symbol+side, so a closing SELL opened
+    an unrelated second position instead of closing the original one."""
+    broker = PaperBroker()
+    await broker.connect()
+    broker._rejection_rate = 0.0
+    broker._partial_fill_rate = 0.0
+
+    await broker.place_order(
+        symbol="NETTEST", side=OrderSide.BUY, quantity=10.0,
+        order_type=OrderType.LIMIT, price=100.0,
+    )
+    positions_resp = await broker.get_positions()
+    assert len(positions_resp.data) == 1
+    assert positions_resp.data[0]["side"] == OrderSide.BUY
+    assert positions_resp.data[0]["quantity"] == 10.0
+
+    # Full close via an opposite-side fill for the same quantity
+    await broker.place_order(
+        symbol="NETTEST", side=OrderSide.SELL, quantity=10.0,
+        order_type=OrderType.LIMIT, price=110.0,
+    )
+    positions_resp = await broker.get_positions()
+    assert positions_resp.data == []  # closed, not a lingering phantom position
+
+
+@pytest.mark.asyncio
+async def test_paper_broker_opposite_side_fill_partially_reduces_position() -> None:
+    broker = PaperBroker()
+    await broker.connect()
+    broker._rejection_rate = 0.0
+    broker._partial_fill_rate = 0.0
+
+    await broker.place_order(
+        symbol="NETTEST2", side=OrderSide.BUY, quantity=10.0,
+        order_type=OrderType.LIMIT, price=100.0,
+    )
+    await broker.place_order(
+        symbol="NETTEST2", side=OrderSide.SELL, quantity=4.0,
+        order_type=OrderType.LIMIT, price=110.0,
+    )
+    positions_resp = await broker.get_positions()
+    assert len(positions_resp.data) == 1
+    assert positions_resp.data[0]["side"] == OrderSide.BUY
+    assert positions_resp.data[0]["quantity"] == 6.0
+    assert positions_resp.data[0]["realised_pnl"] == pytest.approx(40.0)  # (110-100)*4
+
+
 @pytest.mark.asyncio
 async def test_paper_broker_order_rejection() -> None:
     broker = PaperBroker()

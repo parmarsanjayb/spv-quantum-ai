@@ -3,6 +3,10 @@ actions:
     action: SIGNAL_BUY
     confidence: 85.0
     reason: EMA_9 crossed above EMA_20, RSI is above 50, and Market is Trending Bullish.
+  exit:
+    action: SIGNAL_SELL
+    confidence: 80.0
+    reason: EMA_9 fell below EMA_20 (Death Cross) — bullish setup invalidated.
 description: Golden Cross with RSI support in Bullish Regime
 enabled: true
 name: sample_trend_strategy
@@ -20,4 +24,11 @@ rules:
     source: market_regime
     value: TRENDING_BULLISH
   operator: AND
-version: 1.0.0
+exit_rules:
+  conditions:
+  - key: EMA_9
+    operator: '<'
+    source: indicator
+    target: EMA_20
+  operator: AND
+version: 1.1.0

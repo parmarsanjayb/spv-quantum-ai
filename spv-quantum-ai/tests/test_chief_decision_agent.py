@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from agents.chief_decision_agent import ChiefDecisionAgent, ApprovalManager, ConflictResolver
 from core.bus import event_bus, EventModel
 from portfolio.engine import portfolio_engine
+from portfolio.models import Position
 
 # ── Component Validation Tests ────────────────────────────────────────────────
 
@@ -46,6 +47,48 @@ async def test_approval_manager_checks():
     state, code, desc = await mgr.validate_checks(payload_conf)
     assert state == "REJECTED"
     assert code == "CONFIDENCE_TOO_LOW"
+
+
+@pytest.mark.asyncio
+async def test_approval_manager_rejects_sell_with_no_open_position():
+    """A SIGNAL_SELL exit with nothing open to close must be rejected —
+    this system doesn't support naked shorting."""
+    mgr = ApprovalManager()
+    mgr.reset_daily_trades()
+    async with portfolio_engine.positions._lock:
+        portfolio_engine.positions._positions.clear()
+
+    state, code, desc = await mgr.validate_checks({
+        "symbol": "TCS", "overall_confidence": 75.0, "risk_status": "ALLOW", "side": "SELL",
+    })
+    assert state == "REJECTED"
+    assert code == "NO_POSITION_TO_CLOSE"
+
+
+@pytest.mark.asyncio
+async def test_approval_manager_allows_sell_close_bypassing_position_and_capital_limits():
+    """A SELL that closes an existing position must be approved even when
+    the position-count/capital checks would otherwise block a new BUY —
+    closing a position reduces risk, it shouldn't be blocked by the same
+    limits meant to cap new exposure."""
+    mgr = ApprovalManager()
+    mgr.reset_daily_trades()
+    mgr.max_open_positions = 1
+    async with portfolio_engine.positions._lock:
+        portfolio_engine.positions._positions.clear()
+        portfolio_engine.positions._positions["TCS"] = Position(
+            symbol="TCS", segment="Equity", side="BUY", quantity=7.0, avg_price=3500.0,
+        )
+    portfolio_engine.summary.available_capital = 0.0  # would block a BUY
+
+    state, code, desc = await mgr.validate_checks({
+        "symbol": "TCS", "overall_confidence": 75.0, "risk_status": "ALLOW", "side": "SELL",
+    })
+    assert state == "APPROVED"
+    assert code == "SUCCESS"
+
+    async with portfolio_engine.positions._lock:
+        portfolio_engine.positions._positions.clear()
 
 
 def test_conflict_resolver():

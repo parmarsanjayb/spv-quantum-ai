@@ -219,19 +219,48 @@ class PaperBroker(BaseBroker):
             self._used_margin  = max(0.0, self._used_margin - margin_req)
 
         # ── Update position ──
-        pos_key = f"{symbol}_{side.value}"
-        if pos_key in self._positions:
-            existing = self._positions[pos_key]
-            total_qty   = existing.quantity + filled_qty
+        # Netted per-symbol, not per symbol+side: an opposite-side fill
+        # against an existing position closes/reduces it instead of opening
+        # an independent "phantom" position for the same symbol. Keying by
+        # symbol+side previously meant every exit (hidden stop-loss, a
+        # strategy exit signal, or a manual close) left the original
+        # position sitting open forever while adding an unrelated reversed
+        # entry next to it.
+        existing = self._positions.get(symbol)
+        if existing is None:
+            self._positions[symbol] = Position(
+                symbol=symbol, side=side,
+                quantity=filled_qty, avg_price=exec_price, broker=self.name
+            )
+        elif existing.side == side:
+            total_qty = existing.quantity + filled_qty
             existing.avg_price = round(
                 (existing.avg_price * existing.quantity + exec_price * filled_qty) / total_qty, 4
             )
             existing.quantity = total_qty
         else:
-            self._positions[pos_key] = Position(
-                symbol=symbol, side=side,
-                quantity=filled_qty, avg_price=exec_price, broker=self.name
-            )
+            close_qty = min(existing.quantity, filled_qty)
+            if existing.side == OrderSide.BUY:
+                realized = (exec_price - existing.avg_price) * close_qty
+            else:
+                realized = (existing.avg_price - exec_price) * close_qty
+            existing.realised_pnl += round(realized, 4)
+
+            remaining_existing = round(existing.quantity - close_qty, 6)
+            remaining_new      = round(filled_qty - close_qty, 6)
+
+            if remaining_existing > 0:
+                existing.quantity = remaining_existing
+            elif remaining_new > 0:
+                # Fully closed and reversed: the leftover fill opens a new
+                # position on the other side.
+                self._positions[symbol] = Position(
+                    symbol=symbol, side=side,
+                    quantity=remaining_new, avg_price=exec_price, broker=self.name,
+                    realised_pnl=existing.realised_pnl,
+                )
+            else:
+                del self._positions[symbol]
 
         # ── Record trade ──
         trade = Trade(

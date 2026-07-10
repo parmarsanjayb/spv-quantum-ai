@@ -67,11 +67,19 @@ class StrategyEngine:
         for strategy in active_strategies:
             try:
                 matched = self.evaluator.evaluate_group(strategy.rules, context)
-                
+
+                # Entry and exit conditions are designed to be mutually
+                # exclusive (e.g. Golden Cross vs Death Cross), so exit_rules
+                # is only checked when the entry side didn't match — this
+                # avoids either side needing to know about the other.
+                exit_matched = False
+                if not matched and strategy.exit_rules is not None:
+                    exit_matched = self.evaluator.evaluate_group(strategy.exit_rules, context)
+
                 status_str = "ACTIVE" if strategy.enabled else "DISABLED"
-                
-                if matched:
-                    action_info = strategy.actions.get("matched", {})
+
+                if matched or exit_matched:
+                    action_info = strategy.actions.get("exit" if exit_matched else "matched", {})
                     resp = StrategyResponse(
                         strategy_name=strategy.name,
                         version=strategy.version,
@@ -82,7 +90,7 @@ class StrategyEngine:
                         required_action=action_info.get("action", "SIGNAL_NONE")
                     )
                     responses.append(resp)
-                    
+
                     # Publish Matched event
                     evt = StrategyMatchedEvent(
                         strategy_response=resp,

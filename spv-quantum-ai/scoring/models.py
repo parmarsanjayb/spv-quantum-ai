@@ -22,6 +22,7 @@ class DecisionScoreResult(BaseModel):
     missing_requirements: List[str]         = Field(default_factory=list)
     conflicting_signals: List[str]          = Field(default_factory=list)
     reasoning_summary: str
+    strategy_action: str                    = "SIGNAL_NONE"  # SIGNAL_BUY, SIGNAL_SELL, SIGNAL_NONE
     timestamp: datetime                     = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class DecisionScoreEvent(BaseModel):
