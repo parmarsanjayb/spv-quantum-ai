@@ -987,6 +987,20 @@
                     candleSeries.setData(formatted);
                     ema9Series.setData(data.sma9 || []);
                     ema27Series.setData(data.sma27 || []);
+
+                    const sigs = data.pullback_signals || [];
+                    const markers = sigs.map(s => {
+                        const isEntry = s.type.startsWith('ENTRY');
+                        const isCE = s.type.endsWith('CE');
+                        return {
+                            time: s.time,
+                            position: isEntry ? (isCE ? 'belowBar' : 'aboveBar') : (isCE ? 'aboveBar' : 'belowBar'),
+                            color: isEntry ? (isCE ? '#10b981' : '#ef4444') : '#94a3b8',
+                            shape: isEntry ? (isCE ? 'arrowUp' : 'arrowDown') : 'circle',
+                            text: isEntry ? `${s.type.replace('ENTRY_', '')} @${s.price}` : `${s.reason} @${s.price}`,
+                        };
+                    });
+                    candleSeries.setMarkers(markers);
                 }
             })
             .catch(err => console.error("Error loading chart data:", err));
