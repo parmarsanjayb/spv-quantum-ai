@@ -13,7 +13,7 @@ from indicators.math import (
     calc_sma, calc_ema, calc_rsi, calc_macd, calc_atr, calc_adx,
     calc_vwap, calc_supertrend, calc_bollinger, calc_stoch_rsi,
     calc_cci, calc_roc, calc_momentum, calc_pivot_points,
-    calc_support_resistance
+    calc_support_resistance, calc_bars_since_cross
 )
 from indicators.publisher import IndicatorPublisher
 from indicators.cache import IndicatorCache
@@ -65,6 +65,7 @@ class IndicatorManager:
         tasks = [
             self._pub_ema(symbol, tf, closes, 9,   "EMA_9"),
             self._pub_ema(symbol, tf, closes, 20,  "EMA_20"),
+            self._pub_ema(symbol, tf, closes, 27,  "EMA_27"),
             self._pub_ema(symbol, tf, closes, 50,  "EMA_50"),
             self._pub_ema(symbol, tf, closes, 100, "EMA_100"),
             self._pub_ema(symbol, tf, closes, 200, "EMA_200"),
@@ -83,6 +84,7 @@ class IndicatorManager:
             self._pub_momentum(symbol, tf, closes),
             self._pub_pivot(symbol, tf, highs, lows, closes),
             self._pub_sr(symbol, tf, highs, lows),
+            self._pub_bars_since_cross(symbol, tf, closes),
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -109,6 +111,11 @@ class IndicatorManager:
         t0 = time.perf_counter()
         v  = calc_sma(closes, period)
         await self._emit(name, sym, tf, round(v, 4), {"period": period}, t0)
+
+    async def _pub_bars_since_cross(self, sym, tf, closes):
+        t0 = time.perf_counter()
+        v  = calc_bars_since_cross(closes, 9, 27)
+        await self._emit("BARS_SINCE_EMA_9_27_CROSS", sym, tf, v, {"fast": 9, "slow": 27}, t0)
 
     async def _pub_rsi(self, sym, tf, closes):
         t0 = time.perf_counter()

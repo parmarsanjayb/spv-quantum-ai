@@ -52,15 +52,17 @@ class StrategyEngine:
             raw_candle = payload.get("candle", payload)
             candle = Candle(**raw_candle)
             if candle.complete:
-                await self.evaluate_all(candle.symbol, candle.timeframe)
+                await self.evaluate_all(candle.symbol, candle.timeframe, candle=candle)
         except Exception as e:
             logger.error("Error processing candle event in StrategyEngine", error=str(e))
 
-    async def evaluate_all(self, symbol: str, timeframe: Timeframe) -> List[StrategyResponse]:
+    async def evaluate_all(self, symbol: str, timeframe: Timeframe, candle: Optional[Candle] = None) -> List[StrategyResponse]:
         """
         Builds the context for symbol/timeframe and evaluates all active strategies.
+        `candle`, when given, is the just-closed bar driving this evaluation - used to
+        expose its exact HIGH/LOW (distinct from the tick cache's running day high/low).
         """
-        context = await self._build_context(symbol, timeframe)
+        context = await self._build_context(symbol, timeframe, candle=candle)
         responses: List[StrategyResponse] = []
 
         active_strategies = self.registry.get_active()
@@ -120,12 +122,19 @@ class StrategyEngine:
 
         return responses
 
-    async def _build_context(self, symbol: str, timeframe: Timeframe) -> Dict[str, Any]:
+    async def _build_context(self, symbol: str, timeframe: Timeframe, candle: Optional[Candle] = None) -> Dict[str, Any]:
         """Gathers latest values and previous values into a rule context."""
         # ── 1. Gather Current Context ─────────────────────────────────────────
         curr_indicators = {}
         prev_indicators = {}
-        
+
+        # Expose the just-closed bar's own HIGH/LOW under the "indicator" source so
+        # rules can compare it directly against other indicators (e.g. EMA touches).
+        # Distinct from market_data.high/low, which is the tick cache's running day high/low.
+        if candle is not None:
+            curr_indicators["HIGH"] = candle.high
+            curr_indicators["LOW"] = candle.low
+
         # Load all registered indicators
         from indicators.registry import INDICATOR_REGISTRY
         for name in INDICATOR_REGISTRY.keys():
@@ -170,6 +179,8 @@ class StrategyEngine:
 
         now = datetime.now(timezone.utc)
         current_context = {
+            "symbol": symbol,
+            "timeframe": timeframe.value if hasattr(timeframe, "value") else str(timeframe),
             "indicators": curr_indicators,
             "market_regime": regime_val,
             "risk_status": risk_status_val,

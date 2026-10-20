@@ -1,0 +1,42 @@
+name: ema_9_27_pullback_sltrail_ce
+version: 1.0.0
+description: >-
+  3-Minute NIFTY50 Dual-EMA Touch Pullback (bullish side). Entry requires an
+  established uptrend (EMA_9 > EMA_27 for 8+ bars) where a single candle pulls back
+  to touch both EMAs (LOW <= EMA_27 and HIGH >= EMA_9). Exit uses a fixed 25-point
+  stop-loss plus a 20-point trailing stop once favorable, falling back to an opposite
+  EMA crossover or EOD (15:15) square-off. Backtested on 20 trading days of real
+  NIFTY50 3m data: 86 trades, 54.7% win rate, +1451.15 net points (vs +516.70 for the
+  plain EMA-cross/EOD exit on the same entries). Exit management is handled by
+  strategies/custom/ema_pullback_sltrail_executor.py, not by this file's actions alone.
+enabled: true
+timeframe: "3m"
+symbols: ["NIFTY50"]
+trade_as: "ATM_CE"
+rules:
+  operator: AND
+  conditions:
+    - source: symbol
+      operator: '=='
+      value: "NIFTY50"
+    - source: indicator
+      key: EMA_9
+      operator: '>'
+      target: EMA_27
+    - source: indicator
+      key: BARS_SINCE_EMA_9_27_CROSS
+      operator: '>='
+      value: 8.0
+    - source: indicator
+      key: LOW
+      operator: '<='
+      target: EMA_27
+    - source: indicator
+      key: HIGH
+      operator: '>='
+      target: EMA_9
+actions:
+  matched:
+    action: SIGNAL_BUY
+    confidence: 92.0
+    reason: "Established bull trend (>=8 bars). Candle touched both 9 & 27 EMA. Buying ATM CE (executed + exited by ema_pullback_sltrail_executor: SL 25pts / Trail 20pts / EMA-cross / EOD)."

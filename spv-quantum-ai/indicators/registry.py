@@ -7,6 +7,7 @@ INDICATOR_REGISTRY = {
     # Moving Averages
     "EMA_9":   {"family": "MA",        "period": 9,   "description": "Exponential Moving Average 9"},
     "EMA_20":  {"family": "MA",        "period": 20,  "description": "Exponential Moving Average 20"},
+    "EMA_27":  {"family": "MA",        "period": 27,  "description": "Exponential Moving Average 27"},
     "EMA_50":  {"family": "MA",        "period": 50,  "description": "Exponential Moving Average 50"},
     "EMA_100": {"family": "MA",        "period": 100, "description": "Exponential Moving Average 100"},
     "EMA_200": {"family": "MA",        "period": 200, "description": "Exponential Moving Average 200"},
@@ -33,6 +34,9 @@ INDICATOR_REGISTRY = {
     # Support / Resistance
     "PIVOT_POINTS": {"family": "S_R", "description": "Classic Pivot Points (P, R1-R3, S1-S3)"},
     "S_R":          {"family": "S_R", "description": "Support & Resistance (20-bar high/low)"},
+
+    # Crossover tracking
+    "BARS_SINCE_EMA_9_27_CROSS": {"family": "TREND", "description": "Closed bars since EMA_9/EMA_27 last crossed"},
 }
 
 def is_registered(name: str) -> bool:

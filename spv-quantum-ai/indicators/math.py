@@ -24,6 +24,22 @@ def calc_ema_series(prices: List[float], period: int) -> List[float]:
         ema[i] = prices[i] * k + ema[i - 1] * (1.0 - k)
     return ema
 
+def calc_bars_since_cross(prices: List[float], fast_period: int, slow_period: int) -> float:
+    """Number of closed bars since the fast/slow EMA last crossed (1 on the bar the
+    cross happened on, incrementing each bar after). Matches the convention used by
+    externally-supplied BARS_SINCE_CROSS columns (e.g. broker-exported backtest CSVs)."""
+    n = len(prices)
+    if n == 0:
+        return 0.0
+    fast = calc_ema_series(prices, fast_period)
+    slow = calc_ema_series(prices, slow_period)
+    bars = 1
+    for i in range(n - 1, 0, -1):
+        if (fast[i] > slow[i]) != (fast[i - 1] > slow[i - 1]):
+            break
+        bars += 1
+    return float(bars)
+
 def calc_ema(prices: List[float], period: int) -> float:
     if not prices:
         return 0.0

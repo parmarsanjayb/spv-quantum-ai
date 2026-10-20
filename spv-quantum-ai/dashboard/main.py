@@ -174,7 +174,13 @@ async def lifespan(app: FastAPI):
     from employees import employee_engine
     await employee_engine.start()
     app.state.employee_engine = employee_engine
-    
+
+    # 22. Start EMA 9/27 Pullback SL+Trail strategy executor (isolated; only acts on
+    # ema_9_27_pullback_sltrail_ce / _pe signals, does not touch any other strategy)
+    from strategies.custom.ema_pullback_sltrail_executor import ema_pullback_sltrail_executor
+    await ema_pullback_sltrail_executor.start()
+    app.state.ema_pullback_sltrail_executor = ema_pullback_sltrail_executor
+
     logger.info("Engine fully operational.")
 
     # Run startup readiness checks and cache results
@@ -202,6 +208,7 @@ async def lifespan(app: FastAPI):
     await scanner_scheduler.stop()
     await market_scanner_engine.stop()
     await decision_scoring_engine.stop()
+    await ema_pullback_sltrail_executor.stop()
     await strategy_engine.stop()
     await regime_engine.stop()
     await indicator_engine.stop()

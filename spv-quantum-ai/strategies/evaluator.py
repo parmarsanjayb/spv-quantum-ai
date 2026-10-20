@@ -90,10 +90,13 @@ class ConditionEvaluator:
             
         elif source == "time":
             return src_dict.get("time")
-            
+
         elif source == "session":
             return src_dict.get("session")
-            
+
+        elif source == "symbol":
+            return src_dict.get("symbol")
+
         return None
 
 
