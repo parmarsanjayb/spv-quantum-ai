@@ -956,21 +956,24 @@
                 wickDownColor: '#ef4444',
             });
 
+            const chartFastPeriod = {{ settings.fast_period if settings.fast_period is not none else 9 }};
+            const chartSlowPeriod = {{ settings.slow_period if settings.slow_period is not none else 27 }};
+
             ema9Series = chart.addLineSeries({
                 color: '#f59e0b',
                 lineWidth: 2,
-                title: 'EMA 9',
+                title: `EMA ${chartFastPeriod}`,
                 priceLineVisible: false,
             });
 
             ema27Series = chart.addLineSeries({
                 color: '#60a5fa',
                 lineWidth: 2,
-                title: 'EMA 27',
+                title: `EMA ${chartSlowPeriod}`,
                 priceLineVisible: false,
             });
 
-            fetch(`/api/chart-data?ticker=${ticker}`)
+            fetch(`/api/chart-data?ticker=${ticker}&fast_period=${chartFastPeriod}&slow_period=${chartSlowPeriod}`)
             .then(res => res.json())
             .then(data => {
                 if (data.success && data.candles) {
