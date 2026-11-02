@@ -1,0 +1,153 @@
+//@version=6
+strategy("Early Trend Catcher - EMA 9/27 (5-Case)", shorttitle="ETC-5Case",
+     overlay=true, default_qty_type=strategy.fixed, default_qty_value=1,
+     initial_capital=100000, calc_on_every_tick=false, pyramiding=0,
+     process_orders_on_close=true)
+
+// ============================= Case selector =============================
+caseInput = input.string("Case 5: Early Entry + ADX + DI (backtested best risk-adjusted)",
+     "Entry Case", options=[
+     "Case 1: Standard EMA Crossover",
+     "Case 2: Early Entry (Gap<Thresh + ADX)",
+     "Case 3: Early Entry (use Gap Threshold = 15)",
+     "Case 4: Early Entry (no ADX filter)",
+     "Case 5: Early Entry + ADX + DI (backtested best risk-adjusted)"], group="Case")
+caseNum = caseInput == "Case 1: Standard EMA Crossover" ? 1 :
+          caseInput == "Case 2: Early Entry (Gap<Thresh + ADX)" ? 2 :
+          caseInput == "Case 3: Early Entry (use Gap Threshold = 15)" ? 3 :
+          caseInput == "Case 4: Early Entry (no ADX filter)" ? 4 : 5
+
+// ============================= Inputs =============================
+emaFastLen   = input.int(9, "EMA Fast Length", group="EMA")
+emaSlowLen   = input.int(27, "EMA Slow Length", group="EMA")
+gapThreshold = input.float(30.0, "EMA Gap Threshold (pts) - set 15 for Case 3", group="EMA")
+
+adxDiLen     = input.int(14, "ADX / DI Length", group="ADX")
+adxSmoothLen = input.int(14, "ADX Smoothing", group="ADX")
+adxThresh    = input.float(20.0, "ADX Threshold", group="ADX")
+
+bodyPctMin   = input.float(0.50, "Min Body / Range (candle strength)", group="Candle Strength")
+closeZonePct = input.float(0.35, "Close-Zone (upper/lower %% of range)", group="Candle Strength")
+
+slPoints     = input.float(25.0, "Stop Loss (pts)", group="Exit")
+trailPoints  = input.float(20.0, "Trailing Stop - activation & offset (pts)", group="Exit")
+useFixedTarget = input.bool(false, "Also use a fixed Target (pts)?", group="Exit")
+targetPoints = input.float(40.0, "Fixed Target (pts, only if enabled above)", group="Exit")
+
+noNewEntryAfter = input.int(1500, "No New Entry After (HHMM, exchange tz)", group="Session")
+forceExitAt     = input.int(1520, "Force Exit At (HHMM, exchange tz)", group="Session")
+
+showNoTradeBg = input.bool(true, "Highlight Sideways / No-Trade Zone", group="Visuals")
+showSlTpLines = input.bool(true, "Plot SL / Target lines for open trade", group="Visuals")
+
+// ============================= EMA =============================
+ema9  = ta.ema(close, emaFastLen)
+ema27 = ta.ema(close, emaSlowLen)
+gap   = math.abs(ema9 - ema27)
+contracting = gap < gap[1]
+
+crossUp = ta.crossover(ema9, ema27)
+crossDn = ta.crossunder(ema9, ema27)
+
+// ============================= ADX / DMI (Wilder, manual - no repaint) =============================
+upMove   = high - high[1]
+downMove = low[1] - low
+plusDM   = (upMove > downMove and upMove > 0) ? upMove : 0.0
+minusDM  = (downMove > upMove and downMove > 0) ? downMove : 0.0
+trRma    = ta.rma(ta.tr(true), adxDiLen)
+plusDI   = 100 * ta.rma(plusDM, adxDiLen) / trRma
+minusDI  = 100 * ta.rma(minusDM, adxDiLen) / trRma
+dx       = 100 * math.abs(plusDI - minusDI) / (plusDI + minusDI)
+adxVal   = ta.rma(dx, adxSmoothLen)
+
+// ============================= Candle strength =============================
+rng = high - low
+bodyPctVal  = rng > 0 ? math.abs(close - open) / rng : 0.0
+closePosVal = rng > 0 ? (close - low) / rng : 0.5
+strongBull = close > open and bodyPctVal >= bodyPctMin and closePosVal >= (1 - closeZonePct)
+strongBear = close < open and bodyPctVal >= bodyPctMin and closePosVal <= closeZonePct
+
+// ============================= Session time filter =============================
+curTime     = hour(time, "Asia/Kolkata") * 100 + minute(time, "Asia/Kolkata")
+withinEntry = curTime < noNewEntryAfter
+forceExit   = curTime >= forceExitAt
+
+// ============================= Entry logic per case =============================
+belowBefore = ema9 < ema27
+aboveBefore = ema9 > ema27
+crossedClosedAbove = low <= ema27 and close > ema27
+crossedClosedBelow = high >= ema27 and close < ema27
+
+ceEarly = belowBefore and gap < gapThreshold and contracting and crossedClosedAbove and strongBull
+peEarly = aboveBefore and gap < gapThreshold and contracting and crossedClosedBelow and strongBear
+
+useAdxFilter = caseNum != 4
+ceEarlyF = useAdxFilter ? (ceEarly and adxVal > adxThresh) : ceEarly
+peEarlyF = useAdxFilter ? (peEarly and adxVal > adxThresh) : peEarly
+
+useDI = caseNum == 5
+ceEarlyFinal = useDI ? (ceEarlyF and plusDI > minusDI) : ceEarlyF
+peEarlyFinal = useDI ? (peEarlyF and minusDI > plusDI) : peEarlyF
+
+buyCE = (caseNum == 1 ? crossUp : ceEarlyFinal) and withinEntry
+buyPE = (caseNum == 1 ? crossDn : peEarlyFinal) and withinEntry
+
+// ============================= Strategy execution =============================
+tickPts(p) => p / syminfo.mintick
+
+if buyCE and strategy.position_size == 0
+    strategy.entry("CE", strategy.long)
+
+if buyPE and strategy.position_size == 0
+    strategy.entry("PE", strategy.short)
+
+if strategy.position_size > 0
+    if useFixedTarget
+        strategy.exit("XCE", "CE", loss=tickPts(slPoints), profit=tickPts(targetPoints),
+             trail_points=tickPts(trailPoints), trail_offset=tickPts(trailPoints), comment="SL/TP/TRAIL")
+    else
+        strategy.exit("XCE", "CE", loss=tickPts(slPoints),
+             trail_points=tickPts(trailPoints), trail_offset=tickPts(trailPoints), comment="SL/TRAIL")
+    if crossDn or forceExit
+        strategy.close("CE", comment=forceExit ? "EOD" : "EMA_X")
+
+if strategy.position_size < 0
+    if useFixedTarget
+        strategy.exit("XPE", "PE", loss=tickPts(slPoints), profit=tickPts(targetPoints),
+             trail_points=tickPts(trailPoints), trail_offset=tickPts(trailPoints), comment="SL/TP/TRAIL")
+    else
+        strategy.exit("XPE", "PE", loss=tickPts(slPoints),
+             trail_points=tickPts(trailPoints), trail_offset=tickPts(trailPoints), comment="SL/TRAIL")
+    if crossUp or forceExit
+        strategy.close("PE", comment=forceExit ? "EOD" : "EMA_X")
+
+// ============================= Visuals =============================
+plot(ema9, "EMA 9", color=color.new(color.blue, 0), linewidth=2)
+plot(ema27, "EMA 27", color=color.new(color.orange, 0), linewidth=2)
+
+plotshape(buyCE, title="BUY CE", location=location.belowbar, style=shape.labelup,
+     text="BUY CE", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(buyPE, title="BUY PE", location=location.abovebar, style=shape.labeldown,
+     text="BUY PE", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+var line slLine = na
+var line tpLine = na
+var line enLine = na
+if strategy.position_size != 0 and showSlTpLines
+    side = strategy.position_size > 0 ? 1 : -1
+    entryPx = strategy.position_avg_price
+    slPx = entryPx - side * slPoints
+    tpPx = useFixedTarget ? entryPx + side * targetPoints : na
+    line.delete(slLine)
+    line.delete(tpLine)
+    line.delete(enLine)
+    enLine := line.new(bar_index[1], entryPx, bar_index, entryPx, color=color.gray, width=1, style=line.style_dotted)
+    slLine := line.new(bar_index[1], slPx, bar_index, slPx, color=color.red, width=1, style=line.style_dashed)
+    if not na(tpPx)
+        tpLine := line.new(bar_index[1], tpPx, bar_index, tpPx, color=color.green, width=1, style=line.style_dashed)
+else if strategy.position_size == 0
+    line.delete(slLine)
+    line.delete(tpLine)
+    line.delete(enLine)
+
+bgcolor(showNoTradeBg and adxVal <= adxThresh ? color.new(color.gray, 85) : na, title="Sideways / No-Trade Zone")

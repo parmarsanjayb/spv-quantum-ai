@@ -1,0 +1,96 @@
+//@version=5
+strategy("EMA 9/27 + Supertrend + ADX Early Trend Catcher", shorttitle="EMA-ST-ADX",
+     overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     initial_capital=100000, calc_on_every_tick=false)
+
+// ============================= Inputs =============================
+emaFastLen       = input.int(9, "EMA Fast Length", group="EMA")
+emaSlowLen       = input.int(27, "EMA Slow Length", group="EMA")
+gapThreshold     = input.float(30.0, "Max EMA Gap for Early Entry (pts)", group="EMA")
+
+stPeriod         = input.int(10, "Supertrend ATR Period", group="Supertrend")
+stMult           = input.float(3.0, "Supertrend Multiplier", group="Supertrend")
+
+adxDiLen         = input.int(14, "ADX / DI Length", group="ADX")
+adxSmoothLen     = input.int(14, "ADX Smoothing", group="ADX")
+adxThresh        = input.float(20.0, "ADX Threshold", group="ADX")
+
+noNewEntryAfter  = input.int(1500, "No New Entry After (HHMM, exchange tz)", group="Session")
+forceExitAt      = input.int(1520, "Force Exit At (HHMM, exchange tz)", group="Session")
+
+showNoTradeBg    = input.bool(true, "Highlight Sideways / No-Trade Zone (ADX <= Threshold)", group="Visuals")
+noTradeBgColor   = input.color(color.new(color.gray, 85), "No-Trade Background Color", group="Visuals")
+
+// ============================= EMA =============================
+ema9  = ta.ema(close, emaFastLen)
+ema27 = ta.ema(close, emaSlowLen)
+
+gap         = math.abs(ema9 - ema27)
+contracting = gap < gap[1]
+
+// ============================= Supertrend =============================
+// ta.supertrend direction: -1 = uptrend (bullish/green), 1 = downtrend (bearish/red)
+[stLine, stDir] = ta.supertrend(stMult, stPeriod)
+stBullish = stDir < 0
+stBearish = stDir > 0
+
+// ============================= ADX / DMI (Wilder, manual) =============================
+upMove   = high - high[1]
+downMove = low[1] - low
+plusDM   = (upMove > downMove and upMove > 0) ? upMove : 0.0
+minusDM  = (downMove > upMove and downMove > 0) ? downMove : 0.0
+
+trAlpha  = ta.rma(ta.tr(true), adxDiLen)
+plusDI   = 100 * ta.rma(plusDM, adxDiLen) / trAlpha
+minusDI  = 100 * ta.rma(minusDM, adxDiLen) / trAlpha
+dx       = 100 * math.abs(plusDI - minusDI) / (plusDI + minusDI)
+adxVal   = ta.rma(dx, adxSmoothLen)
+
+// ============================= Session time filter =============================
+curTime      = hour(time, "Asia/Kolkata") * 100 + minute(time, "Asia/Kolkata")
+withinEntry  = curTime < noNewEntryAfter
+forceExit    = curTime >= forceExitAt
+
+// ============================= Entry triggers (per spec) =============================
+bullishTrigger = ta.crossover(ema9, ema27) or
+     (close > ema27 and ema9 <= ema27 and gap <= gapThreshold and contracting) or
+     (ta.crossover(adxVal, adxThresh) and ema9 > ema27)
+
+bearishCrossUnderNow = ta.crossunder(ema9, ema27)
+bearishTrigger = bearishCrossUnderNow or
+     (close < ema27 and ema9 >= ema27 and gap <= gapThreshold and contracting) or
+     (not bearishCrossUnderNow and ta.crossover(adxVal, adxThresh) and ema9 < ema27)
+
+buyCE = bullishTrigger and adxVal > adxThresh and stBullish and withinEntry
+buyPE = bearishTrigger and adxVal > adxThresh and stBearish and withinEntry
+
+// ============================= Exit triggers (per spec) =============================
+exitCE = stBearish or ta.crossunder(ema9, ema27) or forceExit
+exitPE = stBullish or ta.crossover(ema9, ema27) or forceExit
+
+// ============================= Strategy execution =============================
+if buyCE
+    strategy.entry("CE", strategy.long)
+
+if buyPE
+    strategy.entry("PE", strategy.short)
+
+if strategy.position_size > 0 and exitCE
+    strategy.close("CE", comment="Exit CE")
+
+if strategy.position_size < 0 and exitPE
+    strategy.close("PE", comment="Exit PE")
+
+// ============================= Visuals =============================
+plot(ema9, "EMA 9", color=color.new(color.blue, 0), linewidth=2)
+plot(ema27, "EMA 27", color=color.new(color.orange, 0), linewidth=2)
+
+plot(stBullish ? stLine : na, "Supertrend (Up)", color=color.new(color.green, 0), style=plot.style_linebr, linewidth=2)
+plot(stBearish ? stLine : na, "Supertrend (Down)", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=2)
+
+plotshape(buyCE, title="BUY CE", location=location.belowbar, style=shape.labelup,
+     text="BUY CE", color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+plotshape(buyPE, title="BUY PE", location=location.abovebar, style=shape.labeldown,
+     text="BUY PE", color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+bgcolor(showNoTradeBg and adxVal <= adxThresh ? noTradeBgColor : na, title="Sideways / No-Trade Zone")
